@@ -1,0 +1,150 @@
+---
+title: "DEG_senzaB7"
+output: html_document
+date: "2025-09-05"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Guardando i risultati della deconvoluzione si vede che la quantità di NA nei campioni del blocco 7
+non si limita ai lati (tessuto connettivo) ma è molto diffusa, 
+probabilmente evidenziando una scarsa qualità dei campioni. Effettivamente il blocco 7
+risultava particolarmente svantaggiato anche nelle analisi esplorative, in riferimento
+in particolare al numero totale di UMI per blocco (vedi file tab_rias).
+
+```{r, include=FALSE}
+library(arrow)
+library(Banksy)
+library(BiocParallel)
+library(DropletUtils)
+library(dplyr)
+library(edgeR)
+library(ggplot2)
+library(graphics)
+library(igraph)
+library(jsonlite)
+library(Matrix)
+library(matrixStats)
+library(OSTA.data)
+library(patchwork)
+library(pheatmap)
+library(S4Vectors)
+library(scDblFinder)
+library(scater)
+library(scran)
+library(scuttle)
+library(SingleCellExperiment)
+library(SpatialExperiment)
+library(SummarizedExperiment)
+library(tidyr)
+library(VisiumIO)
+library(spacexr)
+library(SpotSweeper)
+library(ggspavis)
+library(openxlsx)
+```
+
+#dataset senza b7 (non ripetere)
+```{r}
+load("~/subset_list.RData")
+
+#per distinguere poi i vari campioni
+for (nm in names(subset_list)) {
+  spe <- subset_list[[nm]]
+  colData(spe)$sample_id <- rep(nm, ncol(spe))  
+  subset_list[[nm]] <- spe
+}
+
+spe_list <- subset_list[names(subset_list)]
+exclude_names <- c("sham_b7", "c26STAT3_b7", "c26_b7")
+combined_spe <- do.call(
+  cbind, 
+  spe_list[!(names(spe_list) %in% exclude_names)]
+)
+table(colData(combined_spe)$sample_id)
+
+rm(subset_list)
+# Create pseudo-bulk for each cell_type in each sample
+pb_without_b7 <- aggregateAcrossCells(combined_spe, use.assay.type = "counts", 
+                                id=DataFrame(label = combined_spe$cell_type,
+                                             sample = combined_spe$sample_id))
+pb_without_b7  <- logNormCounts(pb_without_b7) #altre normalizzazioni?
+colnames(pb_without_b7 ) <- paste(pb_without_b7$cell_type, pb_without_b7$sample_id, sep = "_")
+saveRDS(pb_without_b7 , file = "pb_wb7.rds")
+
+
+```
+
+#DEGs FOR ALL SAMPLE TYPES WITHOUT B7
+```{r}
+
+#pb_mult <- readRDS("~/pb_wb7.rds")
+
+lrt_list <- list()
+summary_list <- list()
+
+contrast_list <- list(
+  "C26_vs_SHAM"   = c("tissue_typec26 - tissue_typesham"),
+  "FOXO_vs_C26"   = c("-tissue_typec26"),
+  "FOXO_vs_SHAM"  = c("-tissue_typesham"),
+  "STAT3_vs_C26"  = c("tissue_typec26STAT3 - tissue_typec26"),
+  "STAT3_vs_SHAM" = c("tissue_typec26STAT3 - tissue_typesham"),
+  "MURF1_vs_C26"  = c("tissue_typec26murf1 - tissue_typec26"),
+  "MURF1_vs_SHAM" = c("tissue_typec26murf1 - tissue_typesham"),
+  "SMAD23_vs_C26" = c("tissue_typec26SMAD23 - tissue_typec26"),
+  "SMAD23_vs_SHAM"= c("tissue_typec26SMAD23 - tissue_typesham")
+)
+
+for (contrast_name in names(contrast_list)) {
+  lrt_list[[contrast_name]] <- list()
+  
+  for (cell_type in unique(pb_without_b7$cell_type)) {
+    ct_pb <- pb_without_b7[, pb_without_b7$cell_type == cell_type]
+    y <- DGEList(counts(ct_pb), samples = as.data.frame(colData(ct_pb)))
+    keep <- filterByExpr(y, group = y$samples$tissue_type)
+    y <- y[keep,, keep.lib.sizes=FALSE]
+    y <- calcNormFactors(y) 
+    design <- model.matrix(~ 0 + tissue_type, y$samples)
+    y <- estimateDisp(y, design)
+    fit <- glmFit(y, design)
+    
+    contrast <- makeContrasts(contrasts = contrast_list[[contrast_name]], levels = design)
+    
+    lrt <- glmLRT(fit, contrast = contrast)
+    res <- topTags(lrt, n = Inf)$table
+    res$significant <- res$FDR < 0.05
+    
+    sig <- res[res$significant, ]
+    sig_up <- sig[sig$logFC >= 0, ]
+    sig_down <- sig[sig$logFC < 0, ]
+    
+    lrt_list[[contrast_name]][[cell_type]] <- list(
+      full = res,
+      sig = sig,
+      up = sig_up,
+      down = sig_down
+    )
+    
+    gene_summary <- data.frame(
+      contrast = contrast_name,
+      cell_type = cell_type,
+      Geni_considerati = nrow(res),
+      Geni_significativi = nrow(sig),
+      Upregolati = nrow(sig_up),
+      Downregolati = nrow(sig_down)
+    )
+    
+    summary_list[[length(summary_list) + 1]] <- gene_summary
+  }
+}
+
+# Tabella riassuntiva
+summary_df <- do.call(rbind, summary_list)
+print(summary_df)
+
+```
+
+#da salvare (ma prima ricontrollare il codice a livello teorico)
+

@@ -99,7 +99,7 @@ run_my_rctd <- function(spe, sce_ref, out_prefix) {
     "Tenocyte" = "#A3E635"           # verde lime
 )
 
-  stat1 <- plotCoords(spe, annotate = "cell_type", point_size = 0.7) +
+  stat1 <- plotCoords(spe, annotate = "cell_type", point_size = 0.5) +
     scale_color_manual(values = your_color_vector) +
     theme(
       legend.key.width = unit(0.5, "lines"),
@@ -115,11 +115,11 @@ run_my_rctd <- function(spe, sce_ref, out_prefix) {
 
 #lettura campioni e richiamo alla funzione sopra
 ```{r}
-sce_ref <- readRDS("multiome_sce.rds")
 
+sce_ref <- readRDS("~/multiome_sce.rds")
 # Carica tutti i tuoi RData in modo iterativo
 for (i in c(1,2,3,4,5,6,7,9)) {
-    load(paste0("speHD", i, "_g.RData"))
+    load(paste0("~/speHD", i, "_g.RData"))
 }
 
 spe_list <- list(

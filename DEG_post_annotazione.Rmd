@@ -148,6 +148,7 @@ print(summary_df)
 ```
 
 
+
 #DEGs FOR ALL SAMPLE TYPES 
 ```{r}
 
@@ -255,8 +256,10 @@ for (contrast_name in names(lrt_list)) {
   saveWorkbook(wb, file.path(outdir, paste0("dge_", clean_contrast, ".xlsx")), overwrite = TRUE)
 }
 
+#NB: FATTO FINO A SHAM E MURF DEL BLOCCO 3 (MANCA L'ULTIMO)
 
 ```
+
 
 #Confronto tra mionuclei trim63 dei c26 e mionuclei 2b degli sham
 ```{r}
