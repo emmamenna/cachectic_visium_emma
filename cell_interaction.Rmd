@@ -1,0 +1,120 @@
+---
+title: "spicyR"
+output: html_document
+date: "2025-09-10"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(arrow)
+library(Banksy)
+library(BiocParallel)
+library(DropletUtils)
+library(dplyr)
+library(edgeR)
+library(ggplot2)
+library(graphics)
+library(igraph)
+library(jsonlite)
+library(Matrix)
+library(OSTA.data)
+library(patchwork)
+library(pheatmap)
+library(S4Vectors)
+library(scDblFinder)
+library(scater)
+library(scran)
+library(scuttle)
+library(SingleCellExperiment)
+library(SpatialExperiment)
+library(SummarizedExperiment)
+library(tidyr)
+library(VisiumIO)
+library(spacexr)
+library(SpotSweeper)
+library(ggspavis)
+```
+
+Performs spatial tests on spatial cytometry data.
+We can test whether one cell type tends to be more localised with another cell type in one condition compared to the other. 
+
+Non so biologicamente quale sarebbe in questo caso la domanda di interesse.
+
+#Crea l'oggetto combined_spe (me lo potrei anche salvare...)
+```{r}
+load("~/subset_list.RData")
+
+for (nm in names(subset_list)) {
+  spe <- subset_list[[nm]]
+  colData(spe)$sample_id <- rep(nm, ncol(spe))  
+  subset_list[[nm]] <- spe
+}
+
+spe_list <- subset_list[names(subset_list)]
+combined_spe <- do.call(cbind, spe_list)
+table(colData(combined_spe)$cell_type)
+table(colData(combined_spe)$sample_id)
+
+rm(subset_list)
+```
+
+```{r}
+library(spicyR)
+?spicy
+
+#qui invece vuole un unico oggetto, come gestisco la NORMALIZZAZIONE?
+combined_spe
+
+table(combined_spe$cell_type, combined_spe$tissue_type)
+#probabilmente dà problemi perché ci sono combinazioni con troppe poche osservazioni
+#siccome sono anche tanti test intanto guardo solo i trim vs 2b.
+
+#imposto sham come livello di riferimento
+levels(combined_spe$tissue_type)
+combined_spe$tissue_type <- relevel(
+  factor(combined_spe$tissue_type),  
+  ref = "sham"                  
+)
+
+spicyTest <- spicy(
+  combined_spe,
+  condition = "tissue_type",
+  cellType = "cell_type",
+  imageID = "sample_id",
+  spatialCoords = c("pxl_col_in_fullres", "pxl_row_in_fullres"),
+  from = "Myonuclei_IIb",
+  to = "Myonuclei_Trim63"
+)
+#topPairs(spicyTest) quando guardo + tipi cell
+spicyTest$coefficient
+spicyTest$p.value
+#se ho capito bene come interpetarli, in tutte le altre condizioni rispetto a sham
+#c'è una maggior vicinanza dei due tipi cellulari ed è sempre significativa.
+
+#capire come interpretare i risultati
+
+```
+
+Visualizzazione
+```{r}
+#con tutti i confronti:
+# signifPlot(
+#   spicyTest,
+#   breaks = c(-3, 3, 1),
+#   marksToPlot = c("Macrophages", "DC_or_Mono", "dn_T_CD3", "Neutrophils",
+#                   "CD8_T_cell", "Keratin_Tumour")
+# )
+
+spicyBoxPlot(results = spicyTest, 
+             from = "Myonuclei_IIb",
+             to = "Myonuclei_Trim63",  
+             rank = 1)
+
+```
+
+
+
+

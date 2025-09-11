@@ -118,38 +118,38 @@ run_my_rctd <- function(spe, sce_ref, out_prefix) {
 
 sce_ref <- readRDS("~/multiome_sce.rds")
 # Carica tutti i tuoi RData in modo iterativo
-for (i in c(1,2,3,4,5,6,7,9)) {
-    load(paste0("~/speHD", i, "_g.RData"))
-}
-
-spe_list <- list(
-    speHD1_g = speHD1_g,
-    speHD2_g = speHD2_g,
-    speHD3_g = speHD3_g,
-    speHD4_g = speHD4_g,
-    speHD5_g = speHD5_g,
-    speHD6_g = speHD6_g,
-    speHD7_g = speHD7_g,
-    speHD9_g = speHD9_g
-)
-
-subset_list <- list()
-
-for (spe_name in names(spe_list)) {
-    spe_obj <- spe_list[[spe_name]]
-    tissue_types <- unique(colData(spe_obj)$tissue_type)
-    for (tissue in tissue_types) {
-        subset_obj <- spe_obj[, colData(spe_obj)$tissue_type == tissue]
-        out_name <- paste0(tissue, "_", gsub("speHD", "b", gsub("_g", "", spe_name)))
-        subset_list[[out_name]] <- subset_obj
-    }
-}
+# for (i in c(1,2,3,4,5,6,7,9)) {
+#     load(paste0("~/speHD", i, "_g.RData"))
+# }
+# 
+# spe_list <- list(
+#     speHD1_g = speHD1_g,
+#     speHD2_g = speHD2_g,
+#     speHD3_g = speHD3_g,
+#     speHD4_g = speHD4_g,
+#     speHD5_g = speHD5_g,
+#     speHD6_g = speHD6_g,
+#     speHD7_g = speHD7_g,
+#     speHD9_g = speHD9_g
+# )
+# 
+# subset_list <- list()
+# 
+# for (spe_name in names(spe_list)) {
+#     spe_obj <- spe_list[[spe_name]]
+#     tissue_types <- unique(colData(spe_obj)$tissue_type)
+#     for (tissue in tissue_types) {
+#         subset_obj <- spe_obj[, colData(spe_obj)$tissue_type == tissue]
+#         out_name <- paste0(tissue, "_", gsub("speHD", "b", gsub("_g", "", spe_name)))
+#         subset_list[[out_name]] <- subset_obj
+#     }
+# }
 
 # for (name in names(subset_list)) {
 #     run_my_rctd(subset_list[[name]], sce_ref, name)
 # }
 
-for (i in 1:length(subset_list)) {
+for (i in 15:length(subset_list)) {
     name <- names(subset_list)[i]
     run_my_rctd(subset_list[[name]], sce_ref, name)
 }
@@ -390,4 +390,6 @@ plot_list <- lapply(names(subset_list), function(nm) {
 
 plot_list
 ```
+ 
+ 
  

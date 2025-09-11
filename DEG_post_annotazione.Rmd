@@ -74,7 +74,7 @@ rm(subset_list)
 pb_mult <- aggregateAcrossCells(combined_spe, use.assay.type = "counts", 
                                 id=DataFrame(label = combined_spe$cell_type,
                                              sample = combined_spe$sample_id))
-pb_mult <- logNormCounts(pb_mult) #altre normalizzazioni?
+pb_mult <- logNormCounts(pb_mult)
 colnames(pb_mult) <- paste(pb_mult$cell_type, pb_mult$sample_id, sep = "_")
 saveRDS(pb_mult, file = "pb_celltype.rds")
 
@@ -150,6 +150,7 @@ print(summary_df)
 
 
 #DEGs FOR ALL SAMPLE TYPES 
+filterByExpr: roughly speaking, the strategy keeps genes that have at least min.count reads in a worthwhile number of samples.
 ```{r}
 
 pb_mult <- readRDS("~/pb_celltype.rds")
@@ -177,7 +178,7 @@ for (contrast_name in names(contrast_list)) {
     y <- DGEList(counts(ct_pb), samples = as.data.frame(colData(ct_pb)))
     keep <- filterByExpr(y, group = y$samples$tissue_type)
     y <- y[keep,, keep.lib.sizes=FALSE]
-    y <- calcNormFactors(y) 
+    y <- calcNormFactors(y, method="TMM") #è il metodo di default cmq
     design <- model.matrix(~ 0 + tissue_type, y$samples)
     y <- estimateDisp(y, design)
     fit <- glmFit(y, design)
@@ -255,8 +256,6 @@ for (contrast_name in names(lrt_list)) {
   clean_contrast <- gsub("[^[:alnum:]_]", "_", contrast_name)
   saveWorkbook(wb, file.path(outdir, paste0("dge_", clean_contrast, ".xlsx")), overwrite = TRUE)
 }
-
-#NB: FATTO FINO A SHAM E MURF DEL BLOCCO 3 (MANCA L'ULTIMO)
 
 ```
 
