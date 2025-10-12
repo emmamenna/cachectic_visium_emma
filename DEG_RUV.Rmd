@@ -1,0 +1,119 @@
+---
+title: "DEG_RUV"
+output: html_document
+date: "2025-10-12"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(arrow)
+library(Banksy)
+library(BiocParallel)
+library(DropletUtils)
+library(dplyr)
+library(edgeR)
+library(ggplot2)
+library(graphics)
+library(igraph)
+library(jsonlite)
+library(Matrix)
+library(matrixStats)
+library(OSTA.data)
+library(patchwork)
+library(pheatmap)
+library(S4Vectors)
+library(scDblFinder)
+library(scater)
+library(scran)
+library(scuttle)
+library(SingleCellExperiment)
+library(SpatialExperiment)
+library(SummarizedExperiment)
+library(tidyr)
+library(VisiumIO)
+library(spacexr)
+library(SpotSweeper)
+library(ggspavis)
+library(openxlsx)
+```
+
+#dataset senza b7 (NON RIPETERE)
+```{r}
+# load("~/subset_list.RData")
+# 
+# #per distinguere poi i vari campioni
+# for (nm in names(subset_list)) {
+#   spe <- subset_list[[nm]]
+#   colData(spe)$sample_id <- rep(nm, ncol(spe))  
+#   subset_list[[nm]] <- spe
+# }
+# 
+# spe_list <- subset_list[names(subset_list)]
+# exclude_names <- c("sham_b7", "c26STAT3_b7", "c26_b7")
+# combined_spe <- do.call(
+#   cbind, 
+#   spe_list[!(names(spe_list) %in% exclude_names)]
+# )
+# table(colData(combined_spe)$sample_id)
+# 
+# rm(subset_list)
+# # Create pseudo-bulk for each cell_type in each sample
+# pb_without_b7 <- aggregateAcrossCells(combined_spe, use.assay.type = "counts", 
+#                                 id=DataFrame(label = combined_spe$cell_type,
+#                                              sample = combined_spe$sample_id))
+# pb_without_b7  <- logNormCounts(pb_without_b7) #altre normalizzazioni?
+# colnames(pb_without_b7 ) <- paste(pb_without_b7$cell_type, pb_without_b7$sample_id, sep = "_")
+# saveRDS(pb_without_b7 , file = "pb_wb7.rds")
+
+```
+
+```{r}
+
+#NB: sarebbe anche da riprovare a filtrare i geni
+
+pb_mult <- readRDS("~/pb_wb7.rds")
+
+library(RUVSeq)
+get_seg_controls <- function() {
+  data(segList)
+  segList$mouse$mouse_scSEG
+}
+```
+
+# Fit edgeR GLM with RUVg covariate (k =1) on CTRL+PRE+CAC
+# Design: ~ 0 + condition + W
+K è il numero di fattori da rimuovere (1 perché ci aspettiamo solo il blocco)
+```{r}
+fit_edger_with_ruvg <- function(pb, control_genes, k=1) {
+  y <- DGEList(counts(pb), samples = colData(pb))
+  y <- calcNormFactors(y, method = "TMM")
+  
+  # Initial design to stabilize dispersions
+  design0 <- model.matrix(~ 0 + factor(y$samples$condition, levels=c("CTRL","PRE","CAC")))
+  colnames(design0) <- c("CTRL","PRE","CAC")
+  y <- estimateGLMCommonDisp(y, design0)
+  y <- estimateGLMTagwiseDisp(y, design0)
+  fit0 <- glmFit(y, design0)
+  
+  # RUVg factor
+  r <- RUVg(y$counts, control_genes, k = k)
+  y$samples$W <- r$W[,1, drop=TRUE]
+  
+  # Final design
+  design <- model.matrix(~ 0 + factor(y$samples$condition, levels=c("CTRL","PRE","CAC")) + W, data = y$samples)
+  colnames(design)[1:3] <- c("CTRL","PRE","CAC")
+  
+  y <- estimateDisp(y, design)
+  fit <- glmFit(y, design)
+  
+  list(y=y, fit=fit, design=design)
+}
+
+```
+
+
+
+

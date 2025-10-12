@@ -1,0 +1,122 @@
+---
+title: "twcom"
+output: html_document
+date: "2025-09-26"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(arrow)
+library(Banksy)
+library(BiocParallel)
+library(DropletUtils)
+library(dplyr)
+library(edgeR)
+library(ggplot2)
+library(graphics)
+library(igraph)
+library(jsonlite)
+library(Matrix)
+library(OSTA.data)
+library(patchwork)
+library(pheatmap)
+library(S4Vectors)
+library(scDblFinder)
+library(scater)
+library(scran)
+library(scuttle)
+library(SingleCellExperiment)
+library(SpatialExperiment)
+library(SummarizedExperiment)
+library(tidyr)
+library(VisiumIO)
+library(spacexr)
+library(SpotSweeper)
+library(ggspavis)
+library(CellChat)
+library(Seurat)
+library(SeuratDisk)
+library(SpaNorm)
+```
+
+#preparazione dataset
+```{r}
+load("~/subset_list.RData")
+for (nm in names(subset_list)){
+  spe <- subset_list[[nm]]
+  colData(spe)$sample_id <- rep(nm, ncol(spe))  
+  subset_list[[nm]] <- spe
+}
+
+#Filtro gli NA della deconvoluzione e gli spot con conteggi nulli
+#(tanto tranne il blocco 7 sono solo esterni, ossia effettivo rumore - tessuto connettivo)
+subset_list <- lapply(subset_list, function(spe) {
+   keep <- !is.na(spe$cell_type) & colSums(counts(spe)) > 0
+   print(table(keep)) #vedo quanto sto togliendo (molta variabilità: da poche decine a poche migliaia)
+   spe[,keep]
+})
+
+#filter genes (expressed in at least 1% of spots)
+ subset_list <- lapply(subset_list, function(spe) {
+   keep <- filterGenes(spe, prop = 0.01)
+   spe[keep, ]
+})
+
+#Normalizzazione single-cell -> PROVO SPAZIALE
+subset_list <- lapply(subset_list, function(spe) {
+  set.seed(92)
+  spe <- logNormCounts(spe)
+})
+
+
+```
+
+#twcom
+```{r}
+library(TWCOM)
+lrdb <- CellChatDB.mouse
+#dal tutorial:
+ligands <- receptors <- vector(mode="list", length=nrow(lrdb$interaction))
+
+for(i in 1:length(ligands)) {
+    
+    if(!(lrdb$interaction$ligand[i] %in% rownames(lrdb$complex))) {
+        ligands[[i]] <- lrdb$interaction$ligand[i]
+    } else {
+        ltemp <- c(lrdb$complex[rownames(lrdb$complex) == lrdb$interaction$ligand[i], ])
+        ltemp <- ltemp[nzchar(ltemp)]
+        ligands[[i]] <- ltemp
+    }
+    
+    if(!(lrdb$interaction$receptor[i] %in% rownames(lrdb$complex))) {
+        receptors[[i]] <- lrdb$interaction$receptor[i]
+    } else {
+        ltemp <- c(lrdb$complex[rownames(lrdb$complex) == lrdb$interaction$receptor[i], ])
+        ltemp <- ltemp[nzchar(ltemp)]
+        receptors[[i]] <- ltemp
+    }
+    
+}
+ligands <- lapply(ligands, unlist)
+receptors <- lapply(receptors, unlist)
+pathways <- lrdb$interaction$pathway_name
+
+#provo prima su un campione
+spe <- subset_list$sham_b1
+decon_matr <- colData(spe)[,seq(8,22,1)]
+cell_comm_res <- FRETCOM(stdat = logcounts(spe),
+                         M = decon_matr,
+                         ligands = ligands,
+                         receptors = receptors,
+                         coordx = spatialCoords(spe)[,1],
+                         coordy = spatialCoords(spe)[,2], 
+                         maxdist = 500 #consigliato da chat sulla base dello scale_factor
+                         )
+#vabbé non trova nulla
+
+```
+
+

@@ -1,0 +1,135 @@
+---
+title: "deg_wo_b7"
+output: html_document
+date: "2025-10-01"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#rifaccio anche quelli totali (non divisi per tipo cellulare) senza blocco 7
+```{r}
+load("~/subset_list.RData")
+
+#per distinguere poi i vari campioni
+for (nm in names(subset_list)) {
+  spe <- subset_list[[nm]]
+  colData(spe)$sample_id <- rep(nm, ncol(spe))  
+  subset_list[[nm]] <- spe
+}
+
+spe_list <- subset_list[names(subset_list)]
+exclude_names <- c("sham_b7", "c26STAT3_b7", "c26_b7")
+combined_spe <- do.call(
+  cbind, 
+  spe_list[!(names(spe_list) %in% exclude_names)]
+)
+table(colData(combined_spe)$sample_id)
+
+rm(subset_list)
+# Create pseudo-bulk for each cell_type in each sample
+pb_tot <- aggregateAcrossCells(combined_spe, use.assay.type = "counts", 
+                                id = combined_spe$sample_id)
+pb_tot <- logNormCounts(pb_tot) #altre normalizzazioni?
+colnames(pb_tot) <- pb_tot$sample_id
+
+```
+
+```{r}
+
+y <- DGEList(counts(pb_tot), samples = colData(pb_tot))
+#filtraggio geni
+y <- y[rowSums(y$counts) > 0, ]
+#per filtrare un po' di più
+min_samples <- ceiling(0.1 * ncol(y$counts))
+y <- y[rowSums(y$counts > 0) >= min_samples, ]
+
+#Normalizzazione TMM
+y <- calcNormFactors(y)
+
+#Matrice del modello
+design <- model.matrix(~ tissue_type, data = y$samples)
+
+#Stima dispersione e del modello
+y <- estimateDisp(y, design)
+fit <- glmFit(y, design)
+
+#Contrasti:
+contrast_list <- list(
+    "C26_vs_SHAM" = makeContrasts(tissue_typec26 - tissue_typesham, levels = make.names(colnames(design))),
+    "FOXO_vs_C26" = makeContrasts(-tissue_typec26, levels = make.names(colnames(design))),
+    "FOXO_vs_SHAM" = makeContrasts(-tissue_typesham - tissue_typesham, levels = make.names(colnames(design))),
+    "STAT3_vs_C26" = makeContrasts(tissue_typec26STAT3 - tissue_typec26, levels = make.names(colnames(design))),
+    "STAT3_vs_SHAM" = makeContrasts(tissue_typec26STAT3 - tissue_typesham, levels = make.names(colnames(design))),
+    "MURF1_vs_C26" = makeContrasts(tissue_typec26murf1 - tissue_typec26, levels = make.names(colnames(design))),
+    "MURF1_vs_SHAM" = makeContrasts(tissue_typec26murf1 - tissue_typesham, levels = make.names(colnames(design))),
+    "SMAD23_vs_C26" = makeContrasts(tissue_typec26SMAD23 - tissue_typec26, levels = make.names(colnames(design))),
+    "SMAD23_vs_SHAM" = makeContrasts(tissue_typec26SMAD23 - tissue_typesham, levels = make.names(colnames(design)))
+  )
+
+lrt1 <- glmLRT(fit, contrast = contrast_list$FOXO_vs_C26)
+lrt2 <- glmLRT(fit, contrast = contrast_list$C26_vs_SHAM)
+lrt3 <- glmLRT(fit, contrast = contrast_list$FOXO_vs_SHAM)
+lrt4 <- glmLRT(fit, contrast = contrast_list$STAT3_vs_C26)
+lrt5 <- glmLRT(fit, contrast = contrast_list$STAT3_vs_SHAM)
+lrt6 <- glmLRT(fit, contrast = contrast_list$MURF1_vs_C26)
+lrt7 <- glmLRT(fit, contrast = contrast_list$MURF1_vs_SHAM)
+lrt8 <- glmLRT(fit, contrast = contrast_list$SMAD23_vs_C26)
+lrt9 <- glmLRT(fit, contrast = contrast_list$SMAD23_vs_SHAM)
+```
+
+```{r}
+library(openxlsx)
+
+analizza_confronto <- function(lrt_obj, nome_prefix) {
+  
+  res <- topTags(lrt_obj, n = Inf)$table
+  res$significant <- res$FDR < 0.05
+  
+  sig <- res[res$significant, ]
+  sig_up <- sig[sig$logFC >= 0, ]
+  sig_down <- sig[sig$logFC < 0, ]
+  
+  wb <- createWorkbook()
+  addWorksheet(wb, "Tutti_geni")
+  writeData(wb, "Tutti_geni", res, rowNames = TRUE)
+  addWorksheet(wb, "Significativi")
+  writeData(wb, "Significativi", sig, rowNames = TRUE)
+  addWorksheet(wb, "Upregolati")
+  writeData(wb, "Upregolati", sig_up, rowNames = TRUE)
+  addWorksheet(wb, "Downregolati")
+  writeData(wb, "Downregolati", sig_down, rowNames = TRUE)
+  saveWorkbook(wb, paste0("dge_", nome_prefix, ".xlsx"), overwrite = TRUE)
+  
+  gene_summary <- data.frame(
+    Descrizione = c(
+      "Geni considerati",
+      "Geni DE (significativi)",
+      "Geni DE upregolati",
+      "Geni DE downregolati"
+    ),
+    Numero = c(
+      nrow(res),
+      nrow(sig),
+      nrow(sig_up),
+      nrow(sig_down)
+    )
+  )
+  
+  return(gene_summary)
+}
+
+set.seed(1847)
+(ris1 <- analizza_confronto(lrt1, "FOXO_C26"))
+(ris2 <- analizza_confronto(lrt2, "C26_SHAM"))
+(ris3 <- analizza_confronto(lrt3, "FOXO_SHAM"))
+(ris4 <- analizza_confronto(lrt4, "STAT3_C26"))
+(ris5 <- analizza_confronto(lrt5, "STAT3_SHAM"))
+(ris6 <- analizza_confronto(lrt6, "MURF1_C26"))
+(ris7 <- analizza_confronto(lrt7, "MURF1_SHAM"))
+(ris8 <- analizza_confronto(lrt8, "SMAD23_C26"))
+(ris9 <- analizza_confronto(lrt9, "SMAD23_SHAM"))
+
+```
+

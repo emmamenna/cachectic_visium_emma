@@ -1,0 +1,316 @@
+---
+title: "Integrazione e annotazione con sgdGMF"
+output: html_document
+date: "2025-06-30"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(Matrix)
+library(jsonlite)
+library(arrow)
+library(SummarizedExperiment)
+library(S4Vectors)
+library(SpatialExperiment)
+library(VisiumIO)
+library(edgeR)
+library(scuttle)
+library(scran)
+library(dplyr)
+library(SingleCellExperiment)
+library(Seurat)
+library(ggplot2)
+library(sgdGMF)
+```
+
+#Creo un oggetto sce per ogni singolo campione
+```{r}
+
+load("speHD1_f.RData")
+load("speHD2_f.RData")
+load("speHD3_f.RData")
+load("speHD4_f.RData")
+load("speHD5_f.RData")
+load("speHD6_f.RData")
+load("speHD7_f.RData")
+load("speHD9_f.RData")
+
+crea_sce <- function(spe_obj, block) {
+  rownames(spe_obj) <- rowData(spe_obj)$Symbol
+  tissue_type <- unique(spe_obj$tissue_type)
+  sce_list <- list()
+  # Per ogni tipo di tessuto, creo un oggetto SingleCellExperiment
+  for (sample in tissue_type) {
+    name <- paste0(sample, "_", block)
+    sce_list[[name]] <- SingleCellExperiment(assays = list(
+      counts = counts(spe_obj)[, spe_obj$tissue_type == sample]
+    ))
+  }
+  return(sce_list)
+}
+sce_hd1 <- crea_sce(speHD1_f, "b1")
+sce_hd2 <- crea_sce(speHD2_f, "b2")
+sce_hd3 <- crea_sce(speHD3_f, "b3")
+sce_hd4 <- crea_sce(speHD4_f, "b4")
+sce_hd5 <- crea_sce(speHD5_f, "b5")
+sce_hd6 <- crea_sce(speHD6_f, "b6")
+sce_hd7 <- crea_sce(speHD7_f, "b7")
+sce_hd9 <- crea_sce(speHD9_f, "b9")
+
+#aggiungere già esplicitamente l'info blocco?
+sce_list <- c(sce_hd1,sce_hd2,sce_hd3,sce_hd4,sce_hd5,sce_hd6,sce_hd7,sce_hd9)
+
+```
+
+```{r}
+
+sce_list_norm <- lapply(names(sce_list), function(nome_obj) {
+  sce <- sce_list[[nome_obj]]
+  obj_seu <- as.Seurat(sce, counts = "counts", data = NULL)
+  obj_seu$orig.ident <- nome_obj
+  obj_seu <- RenameAssays(obj_seu, originalexp = "RNA")
+  obj_seu <- SCTransform(obj_seu, verbose = FALSE)
+  #riconverto a sce
+  counts_mat <- GetAssayData(obj_seu, assay = "SCT", slot = "counts")
+  logcounts_mat <- GetAssayData(obj_seu, assay = "SCT", slot = "data")
+  obj_sce <- SingleCellExperiment(
+    assays = list(counts = counts_mat, logcounts = logcounts_mat)
+  )
+  return(obj_sce)
+})
+
+names(sce_list_norm) <- names(sce_list)
+
+```
+
+#Merge all samples into a single SCE object
+```{r}
+# counts <- cbind(counts(foxOB1),counts(STAT3B1),counts(shamB1))
+# logcounts <- cbind(logcounts(foxOB1),logcounts(STAT3B1),logcounts(shamB1))
+# sample_id <-  c(rep("foxO",dim(foxOB1)[2]),rep("STAT3",dim(STAT3B1)[2]),
+#                 rep("sham",dim(shamB1)[2]))
+# b1sce <- SingleCellExperiment(
+#   assays = list(counts=counts, logcounts = logcounts),
+#   colData = sample_id
+# )
+
+#numeri diversi di geni??
+#tengo solo quelli in comune?
+#oppure trovare un modo di modificare sctransform (guardare bene la funzione)
+#ALLA FINE CONTANO SOLTANTO I GENI + VARIABILI
+
+gene_lists <- lapply(sce_list_norm, rownames)
+common_genes <- Reduce(intersect, gene_lists)
+#con tutti i campioni però tanto restrittivo
+
+count_matrices <- lapply(sce_list_norm, function(x) counts(x)[common_genes, ])
+combined_counts <- do.call(cbind, count_matrices)
+
+logcount_matrices <- lapply(sce_list_norm, function(x) logcounts(x)[common_genes, ])
+combined_logcounts <- do.call(cbind, logcount_matrices)
+
+# Crea vettore sample_id
+sample_id <- unlist(mapply(function(x, name) {
+  rep(name, ncol(x))
+}, sce_list_norm, names(sce_list_norm)))
+
+
+# Etichette univoche per ogni cellula (es: foxO_1, foxO_2, ..., STAT3_1, ecc.)
+colnames(combined_counts) <- make.unique(paste0(sample_id, "_cell"))
+colnames(combined_logcounts) <- colnames(combined_counts)
+# Crea un DataFrame con sample_id e nomi riga identici alle colnames di combined_counts
+col_data <- DataFrame(sample_id = sample_id)
+rownames(col_data) <- colnames(combined_counts)
+sce_merged <- SingleCellExperiment(
+  assays = list(counts = combined_counts, logcounts = combined_logcounts),
+  colData = col_data
+)
+
+# Crea oggetto SCE
+sce_merged <- SingleCellExperiment(
+  assays = list(counts = combined_counts, logcounts = combined_logcounts),
+  colData = col_data
+)
+
+```
+
+```{r}
+rm(combined_logcounts)
+rm(combined_counts)
+rm(logcount_matrices)
+rm(count_matrices)
+rm(sce_list_norm)
+rm(sce_list)
+rm(sce_hd1)
+rm(sce_hd2)
+rm(sce_hd3)
+rm(sce_hd4)
+rm(sce_hd5)
+rm(sce_hd6)
+rm(sce_hd7)
+rm(sce_hd9)
+
+```
+
+#Selezione geni più variabili e creazione matrice del disegno
+```{r}
+#Geni più variabili
+dec.sce <- modelGeneVar(sce_merged, assay.type = "logcounts")
+
+#Decomposizione varianza
+summary_table <- tibble::tibble(
+  Descrizione = c(
+    "Totale geni",
+    "NA (non stimata)",
+    "Var. bio <= 0",
+    "Var. bio > 0",
+    "FDR < 0.05 (TRUE)",
+    "FDR < 0.01 (TRUE)"
+  ),
+  Valore = c(
+    nrow(dec.sce),
+    sum(is.na(dec.sce$bio)),
+    sum(!is.na(dec.sce$bio) & dec.sce$bio <= 0),
+    sum(!is.na(dec.sce$bio) & dec.sce$bio > 0),
+    sum(dec.sce$FDR < 0.05, na.rm = TRUE),
+    sum(dec.sce$FDR < 0.01, na.rm = TRUE)
+  )
+)
+
+print(summary_table)
+
+top3000 <- getTopHVGs(dec.sce, n = 3000)
+
+# Prepare input matrices for GMF
+# Subset the merged SCE object to include only HVGs
+sce_filtered <- sce_merged[rownames(sce_merged) %in% top3000, ]
+
+# Transpose the count matrix to match GMF input (cells x genes)
+Y <- as.matrix(t(counts(sce_filtered)))  # Warning: may consume large memory
+
+X <- model.matrix(~ sample_id, colData(sce_merged))
+X <- X[colnames(sce_filtered), ]
+
+```
+
+#Rank selection
+PROBLEMI DI MEMORIA
+```{r}
+# ranks <- sgdgmf.rank(Y,                     # Data matrix (cells x genes)
+#                      X,                     # Design matrix
+#                      Z = NULL,              # No additional covariates
+#                      maxcomp = 50,          # Maximum components to consider
+#                      family = poisson(),    # Poisson distribution for counts
+#                      method = "onatski",    # Rank estimation method
+#                      type.reg = "ols",      # Use OLS for coefficient estimation
+#                      type.res = "link",     # Residuals computed on link scale
+#                      maxiter = 10,          # Limit number of iterations
+#                      parallel = FALSE,      # No multithreading
+#                      nthreads = 1)
+# 
+# cat("Selected number of components:", ranks$ncomp, "\n")
+# plot(data, type = "b", main = main_title, xlab = "Component", ylab = ylab)
+# save_plot(ranks$lambdas, "eigen_plot_full", "Eigenvalues (full spectrum)")
+# save_plot(ranks$lambdas, "eigen_log10_plot", "Log10 Eigenvalues", 
+#           log_transform = TRUE, vline = ranks$ncomp)
+```
+
+#fit
+```{r}
+family <- poisson()              # Assume Poisson distribution for U*V
+method <- "sgd"                  # Stochastic gradient descent
+sampling <- "block"              # Block-wise sampling strategy
+control <- list(
+  maxiter = 10000,              # Maximum number of iterations
+  size = c(1000, 250)           # Batch size: 1000 cells × 250 genes
+)
+
+# Fit the Poisson GMF model
+fit <- sgdGMF::sgdgmf.fit(
+  Y = Y,
+  X = X,
+  ncomp = 30,                   # Number of latent components
+  family = family,
+  method = method,
+  sampling = sampling,
+  control.alg = control,
+  control.init = list(          # Initialization method
+    method = "ols",             # Use ordinary least squares
+    type = "link"               # On link scale (log)
+  )
+)
+
+save(fit,file="fit_tot.Rdata")
+
+```
+
+#annotazione
+```{r}
+# Create embedding matrix and reduce dimensions with PCA
+embedding_full <- fit$U %*% t(fit$V)     # Reconstruct latent space
+rownames(embedding_full) <- rownames(Y)
+#step in + per perfezionare la pca di sgdGMF 
+pca_full <- prcomp(embedding_full, rank. = 30)$x
+reducedDim(b1sce, type = "SGD_rescaled_30", withDimnames = FALSE) <- pca_full
+rm(pca_full, fit)
+
+# Annotate and rename cells by sample
+b1sce$sample_id <- factor(b1sce$sample_id)
+colnames(b1sce) <- paste0(b1sce$sample_id, "_", colnames(b1sce))
+
+# Split SCE by sample for potential downstream use
+sce_split <- split(colnames(b1sce), b1sce$sample_id)
+sce_integrated_list <- lapply(sce_split, function(cells) b1sce[, cells])
+
+# Convert to Seurat object and embed the new dimensional reduction
+seu_sing <- as.Seurat(b1sce)
+
+# Run UMAP and construct neighbor graphs using sgdGMF embedding
+seu_sing <- RunUMAP(seu_sing, reduction = "SGD_rescaled_30", dims = 1:30)
+
+#Find clusters
+seu_sing <- FindNeighbors(seu_sing, reduction = "SGD_rescaled_30", dims = 1:30,
+                          graph.name = c("SGD_nn", "SGD_snn"))
+seu_sing <- FindClusters(seu_sing, graph.name = "SGD_snn", resolution = 0.8)
+Idents(seu_sing) <- seu_sing@meta.data$seurat_clusters
+
+```
+
+#grafici vari
+```{r}
+DimPlot(seu_sing, reduction = "umap", label = TRUE, group.by = "seurat_clusters",
+              label.size = 2.5, repel = TRUE) + 
+  theme_classic(base_size = 10) + ggtitle("RNA")
+
+ DimPlot(seu_sing, reduction = "umap", group.by = "sample_id",
+              label = TRUE, label.size = 2.5, repel = TRUE) + 
+  theme_classic(base_size = 10) + ggtitle("RNA") + 
+  scale_color_manual(values = c("foxO" = "blue", "STAT3" = "red", "sham" = "green"))
+
+```
+
+#GENI MARCATORI
+```{r}
+markers <- read.table("cachectic_markers.txt", header = T)
+head(markers)
+table(markers$Cell_type) #9 tipi cellulari
+marker_genes <- markers$Gene
+
+DotPlot(object = seu_sing, features = marker_genes, scale = FALSE, assay = "originalexp") + 
+  RotatedAxis() +  
+  scale_color_continuous(low = "grey", high = "red")
+
+DotPlot(object = seu_sing, features = marker_genes, assay = "originalexp")+ RotatedAxis() +  scale_color_continuous(low = "grey", high = "red")
+
+heat <- DoHeatmap(seu_sing, features=marker_genes, size = 3, angle = 90, draw.lines = TRUE,
+                  lines.width=10) + NoLegend() +
+  scale_fill_gradientn(colors = c("lightblue", "lightgrey", "red"))
+marker_genes %in% rownames(mult_comb[["SCT"]]@scale.data)
+#PROBLEMA: la maggiorparte dei geni marcatori non sono tra le most variable features
+#magari la situa cambia con tutti i blocchi
+
+``` 
+

@@ -1,0 +1,170 @@
+---
+title: "geni3"
+output: html_document
+date: "2025-10-10"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(arrow)
+library(Banksy)
+library(BiocParallel)
+library(DropletUtils)
+library(dplyr)
+library(edgeR)
+library(ggplot2)
+library(graphics)
+library(igraph)
+library(jsonlite)
+library(Matrix)
+library(matrixStats)
+library(OSTA.data)
+library(patchwork)
+library(pheatmap)
+library(S4Vectors)
+library(scDblFinder)
+library(scater)
+library(scran)
+library(scuttle)
+library(SingleCellExperiment)
+library(SpatialExperiment)
+library(SummarizedExperiment)
+library(tidyr)
+library(VisiumIO)
+library(spacexr)
+library(SpotSweeper)
+library(ggspavis)
+library(openxlsx)
+```
+
+
+#GRAFICI PER GENI DI INTERESSE (che rappresentano dei processi cellulari)
+
+#DOTPLOTS
+```{r}
+pb_wb7 <- readRDS("~/pb_wb7.rds")
+geni_int <- read.table("~/geni_di_interesse.txt")
+vec <- as.vector(geni_int)
+markers <- unlist(vec[1], use.names = FALSE)
+
+# CORREGGO EFFETTO DI BATCH ------------------------------------------------------------------------
+library(sva)
+expr <- assay(pb_wb7, "logcounts") 
+colData(pb_wb7)$block <- gsub(".*_", "", colData(pb_wb7)$sample_id)
+#table(pb_wb7$block)
+batch <- colData(pb_wb7)$block
+
+expr_combat <- ComBat(
+  dat = as.matrix(expr),  # matrice numerica
+  batch = batch,
+  par.prior = TRUE,
+  prior.plots = FALSE
+)
+
+df <- as.data.frame(t(expr_combat[markers, , drop=FALSE])) 
+df$sample    <- colData(pb_wb7)$sample
+df$condition <- colData(pb_wb7)$tissue_type
+df$celltype  <- colData(pb_wb7)$cell_type
+
+df_long <- pivot_longer(df, cols = all_of(markers),
+                        names_to = "gene", values_to = "expr")
+
+df <- df %>% filter(condition %in% c("sham","c26"))
+
+df_long <- pivot_longer(df, cols = all_of(markers),
+                        names_to = "gene", values_to = "expr")
+
+# calcolo media e percentuale per ogni celltype × condition × gene
+dot_data <- df_long %>%
+  group_by(condition, celltype, gene) %>%
+  summarise(
+    pct_expr = sum(expr > 0) / n() * 100,
+    avg_expr = mean(expr[expr > 0], na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# genera grafici separati per ogni marker
+plots <- lapply(markers, function(g){
+  ggplot(dot_data %>% filter(gene == g),
+         aes(x = celltype, y = condition)) +
+    geom_point(aes(size = pct_expr, color = avg_expr)) +
+    scale_color_gradient(low = "grey", high = "red") +
+    labs(title = g, y = "Condition", x = "Cell type",
+         color = "Avg expression", size = "% expr >0") +
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+})
+
+#salvataggio
+for(i in seq_along(markers)){
+  ggsave(
+    filename = paste0(markers[i], "_dotplot.jpg"),  
+    plot = plots[[i]],                               
+    width = 8, height = 6, units = "in",            
+    dpi = 300                                       
+  )
+}
+
+```
+
+#Proiezione sul tessuto (scala comune di gene -> confronto i campioni)
+Questi vanno interpretati con attenzione perché non posso correggere
+l'effetto di batch dato che non si tratta di pseudo-bulk.
+```{r}
+data <- read.table("genes_of_interest.txt")
+vec <- as.vector(data)
+markers <- unlist(vec[1], use.names = FALSE)
+markers
+
+subset_list
+mask <- grepl("^(sham_|c26_)", names(subset_list))
+filtered_list <- subset_list[mask]
+
+all_expr_values <- unlist(lapply(filtered_list, function(spe)
+  as.numeric(counts(spe)[markers, ])), use.names = FALSE)
+min_val <- min(all_expr_values, na.rm = TRUE)
+max_val <- max(all_expr_values, na.rm = TRUE)
+
+for (i in seq_along(markers)) {
+  gene <- markers[i]
+  
+  plot_list <- lapply(names(filtered_list), function(slice_name) {
+    spe <- filtered_list[[slice_name]]
+    
+    expr <- as.numeric(counts(spe)[gene, ])
+    coords <- as.data.frame(spatialCoords(spe))
+    coords$expr <- expr
+    
+    ggplot(coords, aes(x = pxl_col_in_fullres, y = pxl_row_in_fullres, color = expr)) +
+      geom_point(size = 0.3) +
+      coord_fixed() +
+      scale_y_reverse() +
+      ggtitle(slice_name, ) +
+      theme_void()+
+      theme(plot.title = element_text(size = 5))
+  })
+  
+  p <- wrap_plots(plot_list, nrow = 2, ncol = 4, guides = "collect") +
+    plot_annotation(title = paste("Spatial expression of", gene)) &
+    theme(
+      legend.key.width = unit(0.5, "lines"),
+      legend.key.height = unit(1, "lines"),
+      plot.title = element_text(hjust = 0.5, size = 14),
+      strip.text = element_text(size = 5)
+    ) &
+    scale_color_gradientn(colors = rev(hcl.colors(9, "Rocket")), 
+                          limits = c(min_val, max_val)
+    )
+  print(p)
+  ggsave(paste0("plots_", gene, ".png"), p, width = 12, height = 9, dpi = 300)
+}
+
+```
+
+
+
+

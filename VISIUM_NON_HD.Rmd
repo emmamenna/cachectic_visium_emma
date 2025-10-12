@@ -1,0 +1,77 @@
+---
+title: "VISIUM_NON_HD"
+output: html_document
+date: "2025-10-08"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(arrow)
+library(Banksy)
+library(BiocParallel)
+library(DropletUtils)
+library(dplyr)
+library(edgeR)
+library(ggplot2)
+library(graphics)
+library(igraph)
+library(jsonlite)
+library(Matrix)
+library(OSTA.data)
+library(patchwork)
+library(pheatmap)
+library(S4Vectors)
+library(scDblFinder)
+library(scater)
+library(scran)
+library(scuttle)
+library(SingleCellExperiment)
+library(SpatialExperiment)
+library(SummarizedExperiment)
+library(tidyr)
+library(VisiumIO)
+library(spacexr)
+library(SpotSweeper)
+library(ggspavis)
+```
+
+#Obiettivo: stessa analisi di deconvoluzione e confronto risultati
+
+#ACQUISIZIONE (codice "spatial_grezzi" in locale)
+```{r, include=FALSE}
+#prova intanto con un campione
+
+dir <- paste0("/outs")
+
+spe1 <- TENxVisium(
+  spacerangerOut = dir,
+  processing = "raw",
+  images = c("hires", "lowres"),
+  jsonFile = "scalefactors_json.json",
+  tissuePattern = "tissue_positions.parquet",
+  spatialCoordsNames = c("pxl_col_in_fullres", "pxl_row_in_fullres")
+) |> import()
+
+#sono già a posto i dati? cioé non è da tagliare il tessuto come nel nostro caso?
+
+# processa_blocco <- function(blocco_num, lista_contissue) {
+#   blocco_nome <- paste0("blocco", blocco_num)
+#   speHD <- Visium2HD(bin = "016", blocco = blocco_nome)
+#   
+#   #Filtro per in/out of tissue (da qupath) e distinguo i 3 campioni
+#   speHD$tissue_type <- lista_contissue[[blocco_nome]]$exp_condition
+#   speHD_g <- speHD[, lista_contissue[[blocco_nome]]$in_tissue == TRUE]
+#   
+#   assign(paste0("speHD", blocco_num, "_g"), speHD_g, envir = .GlobalEnv)
+# }
+# 
+# processa_blocco(6, lista_contissue)
+# 
+# save(speHD6_g,file="speHD6_g.RData")
+
+```
+
+

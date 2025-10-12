@@ -1,0 +1,265 @@
+---
+title: "cell_chat_aggregated"
+output: html_document
+date: "2025-09-26"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(arrow)
+library(Banksy)
+library(BiocParallel)
+library(DropletUtils)
+library(dplyr)
+library(edgeR)
+library(ggplot2)
+library(graphics)
+library(igraph)
+library(jsonlite)
+library(Matrix)
+library(OSTA.data)
+library(patchwork)
+library(pheatmap)
+library(S4Vectors)
+library(scDblFinder)
+library(scater)
+library(scran)
+library(scuttle)
+library(SingleCellExperiment)
+library(SpatialExperiment)
+library(SummarizedExperiment)
+library(tidyr)
+library(VisiumIO)
+library(spacexr)
+library(SpotSweeper)
+library(ggspavis)
+library(CellChat)
+library(Seurat)
+library(SeuratDisk)
+library(SpaNorm)
+```
+
+#PULIZIA DATASET, NORMALIZZAZIONE E AGGREGAZIONE PER CONDIZIONE
+```{r}
+load("~/subset_list.RData")
+for (nm in names(subset_list)){
+  spe <- subset_list[[nm]]
+  colData(spe)$sample_id <- rep(nm, ncol(spe))  
+  subset_list[[nm]] <- spe
+}
+
+#Filtro gli NA della deconvoluzione e gli spot con conteggi nulli
+#(tanto tranne il blocco 7 sono solo esterni, ossia effettivo rumore - tessuto connettivo)
+subset_list <- lapply(subset_list, function(spe) {
+   keep <- !is.na(spe$cell_type) & colSums(counts(spe)) > 0
+   #print(table(keep)) #vedo quanto sto togliendo (molta variabilità: da poche decine a poche migliaia)
+   spe[,keep]
+})
+
+#Normalizzazione single-cell 
+subset_list <- lapply(subset_list, function(spe) {
+  set.seed(92)
+  spe <- logNormCounts(spe)
+})
+
+#DIVIDO PER CONDIZIONE MA TOLGO IL BLOCCO7
+sham_list <- subset_list[names(subset_list) %in% c("sham_b1","sham_b3","sham_b6")]
+c26_list <- subset_list[names(subset_list) %in% c("c26_b2","c26_b4","c26_b6")]
+c26STAT3_list <- subset_list[names(subset_list) %in% c("c26STAT3_b1","c26STAT3_b3","c26STAT3_b5")]
+c26foxO_list <- subset_list[names(subset_list) %in% c("c26foxO_b1","c26foxO_b4","c26foxO_b6","c26foxO_b9")]
+c26SMAD23_list <- subset_list[names(subset_list) %in% c("c26SMAD23_b2","c26SMAD23_b4","c26SMAD23_b5","c26SMAD23_b9")]
+c26murf1_list <- subset_list[names(subset_list) %in% c("c26murf1_b2","c26murf1_b3","c26murf1_b","c26murf1_b9")]
+
+combined_sham <- do.call(cbind, sham_list)
+combined_c26 <- do.call(cbind, c26_list)
+combined_c26STAT3 <- do.call(cbind, c26STAT3_list)
+combined_c26foxO <- do.call(cbind, c26foxO_list)
+combined_c26SMAD23 <- do.call(cbind, c26SMAD23_list)
+combined_c26murf1 <- do.call(cbind, c26murf1_list)
+
+#aggiungo l'identificativo di blocco
+colData(combined_sham)$block <- gsub(".*_", "", colData(combined_sham)$sample_id)
+colData(combined_c26)$block <- gsub(".*_", "", colData(combined_c26)$sample_id)
+colData(combined_c26STAT3)$block <- gsub(".*_", "", colData(combined_c26STAT3)$sample_id)
+colData(combined_c26foxO)$block <- gsub(".*_", "", colData(combined_c26foxO)$sample_id)
+colData(combined_c26SMAD23)$block <- gsub(".*_", "", colData(combined_c26SMAD23)$sample_id)
+colData(combined_c26murf1)$block <- gsub(".*_", "", colData(combined_c26murf1)$sample_id)
+
+```
+
+#FILTRAGGIO GENI
+Un gene deve essere espresso in più dell'1% degli spot in almeno un tipo cellulare
+```{r}
+filter_by_cluster_in_SPE <- function(spe, cluster_col = "cell_type", prop = 0.01) {
+  clusters <- unique(colData(spe)[[cluster_col]])
+  keep_matrix <- matrix(FALSE, nrow = nrow(spe), ncol = length(clusters))
+  for (i in seq_along(clusters)) {
+    cl <- clusters[i]
+    cells <- colData(spe)[[cluster_col]] == cl
+    # sotto-oggetto SpatialExperiment
+    spe_sub <- spe[, cells]
+    keep_matrix[, i] <- filterGenes(spe_sub, prop = prop)
+  }
+  keep <- rowSums(keep_matrix) > 0
+  spe[keep, ]
+}
+
+#FILTRAGGIO ANCHE PER CONDIZIONE (alzo un po' la percentuale) --------------------------------------
+filter_genes <- function(spe, cluster_col = "cell_type", condition_col = "tissue_type", prop = 0.05) {
+  clusters <- unique(colData(spe)[[cluster_col]])
+  conditions <- unique(colData(spe)[[condition_col]])
+  
+  keep_matrix <- matrix(FALSE, nrow = nrow(spe), ncol = length(clusters) * length(conditions))
+  col_idx <- 1
+  
+  for (cond in conditions) {
+    for (cl in clusters) {
+      cells <- colData(spe)[[cluster_col]] == cl & colData(spe)[[condition_col]] == cond
+      if (sum(cells) == 0) next  
+      spe_sub <- spe[, cells]
+      keep_matrix[, col_idx] <- filterGenes(spe_sub, prop = prop)
+      col_idx <- col_idx + 1
+    }
+  }
+  keep <- rowSums(keep_matrix) > 0
+  print(table(keep))
+  spe[keep, ]
+}
+
+combined_sham <- filter_genes(combined_sham)
+combined_c26 <- filter_genes(combined_c26)
+combined_c26STAT3 <- filter_genes(combined_c26STAT3)
+combined_c26foxO <- filter_genes(combined_c26foxO)
+combined_c26SMAD23 <- filter_genes(combined_c26SMAD23)
+combined_c26murf1 <- filter_genes(combined_c26murf1)
+
+```
+
+#CELL CHAT
+```{r}
+chat_list_comb <- list(combined_sham,combined_c26,combined_c26STAT3,
+                       combined_c26foxO,combined_c26SMAD23,combined_c26murf1)
+names(chat_list_comb) <- c("sham","c26","c26STAT3","c26foxO","c26SMAD23","c26murf1")
+
+cellchat_list <- lapply(chat_list_comb, function(spx) {
+  sce <- as(spx, "SingleCellExperiment")
+  colnames(sce) <- make.unique(colnames(sce))
+  rownames(colData(sce)) <- colnames(sce)
+  chat <- createCellChat(object = sce, group.by = "cell_type")
+  chat@DB <- CellChatDB.mouse
+  #chat@DB <-subsetDB(database,search="Secreted Signaling")
+  chat <- subsetData(chat)
+  chat <- identifyOverExpressedGenes(chat)
+  chat <- identifyOverExpressedInteractions(chat)
+  chat <- computeCommunProb(chat, type = "triMean")
+  chat <- filterCommunication(chat, min.cells = 5)
+  chat <- computeCommunProbPathway(chat)
+  chat <- aggregateNet(chat)
+  chat
+})
+
+lapply(cellchat_list, function(x){
+  df.net <- subsetCommunication(x, slot.name = "netP")
+  prob <- df.net %>% group_by(pathway_name) %>% summarise(sum = sum(prob))
+  prob <- prob[order(prob$sum, decreasing = T), ]
+})
+
+```
+
+#VISUALIZZAZIONE COMPLETA
+```{r}
+# Loop sui campioni
+invisible(lapply(names(cellchat_list), function(sample_name) {
+  chat <- cellchat_list[[sample_name]]
+  pathways.show <- chat@netP$pathways
+  
+  # pulizia nome file
+  safe_name <- gsub("[^[:alnum:]_\\-]", "_", sample_name)
+  out_pdf <- paste0("CellChat_Exploratory_", safe_name, ".pdf")
+  
+  # vertex.receiver default: tutti i cluster
+  n_groups <- length(unique(as.character(chat@idents)))
+  vertex.receiver <- seq_len(n_groups)
+  
+  pdf(file = out_pdf, width = 9, height = 9)
+  
+  ## --- PAGINA INTRO CAMPIONE ---
+  tryCatch({
+    groupSize <- as.numeric(table(chat@idents))
+    par(mfrow = c(1,2), xpd = TRUE)
+    
+    netVisual_circle(chat@net$count,
+                     vertex.weight = groupSize,
+                     weight.scale = TRUE,
+                     label.edge = FALSE,
+                     title.name = "Number of interactions")
+    
+    netVisual_circle(chat@net$weight,
+                     vertex.weight = groupSize,
+                     weight.scale = TRUE,
+                     label.edge = FALSE,
+                     title.name = "Interaction weights/strength")
+    
+    par(mfrow = c(1,1)) # reset layout
+  }, error = function(e){
+    message("[", sample_name, "] overview circle plots failed: ", e$message)
+  })
+  
+  ## --- LOOP SUI PATHWAYS ---
+  for (pw in pathways.show) {
+    # pagina separatore
+    grid::grid.newpage()
+    grid::grid.text(label = paste0(sample_name, " — ", pw),
+                    gp = grid::gpar(fontsize = 20, fontface = "bold"))
+    
+    # 1) Chord
+    tryCatch({
+      p <- netVisual_aggregate(chat, signaling = pw,
+                               layout = "chord",
+                               signaling.name = paste0(sample_name, " - ", pw),
+                               vertex.label.cex = 0.8,
+                               title.space = 10)
+      print(p)
+    }, error = function(e){message("[", sample_name,"|",pw,"] chord failed: ", e$message)})
+    
+    # 2) Circle
+    tryCatch({
+      p <- netVisual_aggregate(chat, signaling = pw,
+                               layout = "circle",
+                               signaling.name = paste0(sample_name, " - ", pw),
+                               vertex.label.cex = 0.8,
+                               title.space = 10)
+      print(p)
+    }, error = function(e){message("[", sample_name,"|",pw,"] circle failed: ", e$message)})
+    
+    # 3) Bubble
+    tryCatch({
+      b <- netVisual_bubble(chat,
+                            signaling = pw,
+                            remove.isolate = TRUE)
+      print(b)
+    }, error = function(e){message("[", sample_name,"|",pw,"] bubble failed: ", e$message)})
+    
+    # 4) Heatmap
+    tryCatch({
+      p <- netVisual_heatmap(chat, signaling = pw)
+      print(p)
+    }, error = function(e){message("[", sample_name,"|",pw,"] heatmap failed: ", e$message)})
+    
+    # 5) Contribution (per pathway)
+    tryCatch({
+      c <- netAnalysis_contribution(chat, signaling = pw)
+      print(c)
+    }, error = function(e){message("[", sample_name,"|",pw,"] contribution failed: ", e$message)})
+  }
+  
+  dev.off()
+  message("Saved exploratory PDF for sample: ", safe_name)
+}))
+
+```
+
+

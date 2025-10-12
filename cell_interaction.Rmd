@@ -1,0 +1,403 @@
+---
+title: "spicyR"
+output: html_document
+date: "2025-09-10"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(arrow)
+library(Banksy)
+library(BiocParallel)
+library(DropletUtils)
+library(dplyr)
+library(edgeR)
+library(ggplot2)
+library(graphics)
+library(igraph)
+library(jsonlite)
+library(Matrix)
+library(OSTA.data)
+library(patchwork)
+library(pheatmap)
+library(S4Vectors)
+library(scDblFinder)
+library(scater)
+library(scran)
+library(scuttle)
+library(SingleCellExperiment)
+library(SpatialExperiment)
+library(SummarizedExperiment)
+library(tidyr)
+library(VisiumIO)
+library(spacexr)
+library(SpotSweeper)
+library(ggspavis)
+```
+
+
+#TOLGO BLOCCO 7!!!
+#dataset senza b7 (NON RIPETERE)
+```{r}
+load("~/subset_list.RData")
+
+#per distinguere poi i vari campioni
+for (nm in names(subset_list)) {
+  spe <- subset_list[[nm]]
+  colData(spe)$sample_id <- rep(nm, ncol(spe))  
+  subset_list[[nm]] <- spe
+}
+
+spe_list <- subset_list[names(subset_list)]
+exclude_names <- c("sham_b7", "c26STAT3_b7", "c26_b7")
+combined_spe_wob7 <- do.call(
+  cbind, 
+  spe_list[!(names(spe_list) %in% exclude_names)]
+)
+table(colData(combined_spe_wob7)$sample_id)
+
+rm(subset_list)
+save(combined_spe_wob7, file="combined_spe_wob7.RData")
+```
+
+
+Performs spatial tests on spatial cytometry data.We can test whether one cell type tends to be more localised with another cell type in one condition compared to the other. 
+NB: qui non usa i counts ma le coordinate e la classificazione delle cellule
+quindi la normalizzazione non serve.
+
+Differences of this statistic between two conditions is modelled using a weighted mixed effects model, with condition as the fixed effect and subject as the random effect.
+```{r}
+library(spicyR)
+?spicy
+
+load("combined_spe_wob7.RData")
+combined_spe_wob7
+
+#tolgo sham per fare il confronto trim - 2b
+combined_spe_nosham <- combined_spe_wob7[,!combined_spe_wob7$tissue_type == "sham"]
+table(combined_spe_nosham$cell_type, combined_spe_nosham$tissue_type)
+
+#imposto c26 come livello di riferimento
+levels(combined_spe_nosham$tissue_type)
+combined_spe_nosham$tissue_type <- relevel(
+  factor(combined_spe_nosham$tissue_type),  
+  ref = "c26"                  
+)
+
+spicyTest <- spicy(
+  combined_spe_nosham,
+  condition = "tissue_type",
+  cellType = "cell_type",
+  imageID = "sample_id",
+  spatialCoords = c("pxl_col_in_fullres", "pxl_row_in_fullres"),
+  from = "Myonuclei_IIb",
+  to = "Myonuclei_Trim63",
+  #Rs = seq(0, 3000, by = 200) #non si riesce a cambiare
+)
+spicyTest$coefficient
+spicyTest$p.value
+spicyTest$pairwiseAssoc #weird 
+
+#INDAGARE DI +
+#spicy() dopo può standardizzare o pesare quei valori, per cui i coefficienti del modello possono essere positivi anche se le curve individuali sono negative.
+
+#fox0 unico significativo ma di pochissimo (+ vicini)
+
+# #versione con bootstrap
+# spicyTestBoot <- spicy(
+#   combined_spe_nosham,
+#   condition = "tissue_type",
+#   cellType = "cell_type",
+#   imageID = "sample_id",
+#   spatialCoords = c("pxl_col_in_fullres", "pxl_row_in_fullres"),
+#   from = "Myonuclei_IIb",
+#   to = "Myonuclei_Trim63",
+#   nsim = 1000
+# )
+# spicyTestBoot$coefficient
+# spicyTestBoot$p.value
+#stessa cosa
+
+#Il warning non si riferisce al numero totale di cellule per ciascun tipo (cell_type) o al numero di righe nel tuo combined_spe_nosham, ma piuttosto al numero di immagini (sample_id) in cui quella coppia di tipi cellulari (from, to) è effettivamente presente insieme e ha interazioni osservabili.
+table(combined_spe_nosham$cell_type, combined_spe_nosham$sample_id)
+
+#topPairs(spicyTest) quando guardo + tipi cell
+```
+
+#Visualizzazione test
+```{r}
+#con tutti i confronti:
+# signifPlot(
+#   spicyTest,
+#   breaks = c(-3, 3, 1),
+#   marksToPlot = c("Macrophages", "DC_or_Mono", "dn_T_CD3", "Neutrophils",
+#                   "CD8_T_cell", "Keratin_Tumour")
+# )
+
+spicyBoxPlot(results = spicyTest, 
+             from = "Myonuclei_IIb",
+             to = "Myonuclei_Trim63",  
+             rank = 1)
+```
+
+#inhomLPair modificata
+getAnywhere(inhomLPair)
+```{r}
+inhomLPair_mod <- function (
+    data, 
+    Rs = seq(20, 500, by = 100), 
+    sigma = NULL, 
+    window = "convex", 
+    window.length = NULL, 
+    minLambda = 0.05, 
+    from = NULL, 
+    to = NULL, 
+    edgeCorrect = TRUE, 
+    includeZeroCells = TRUE
+) {
+    # --- Prepara la finestra e il pattern spaziale ---
+    ow <- spicyR:::makeWindow(data, window, window.length)
+    X <- spatstat.geom::ppp(
+        x = data$x, 
+        y = data$y, 
+        window = ow, 
+        marks = data$cellType, 
+        check = FALSE
+    )
+
+    # --- Raggio massimo e valori di R ---
+    if (is.null(Rs)) Rs = seq(20, 500, by = 100)
+    maxR <- min(ow$xrange[2] - ow$xrange[1], ow$yrange[2] - ow$yrange[1]) / 2.01
+    Rs <- unique(pmin(c(0, sort(Rs)), maxR))
+
+    # --- Calcolo densità se sigma è definito ---
+    if (!is.null(sigma)) {
+        den <- spatstat.explore::density.ppp(X, sigma = sigma)
+        den <- den / mean(den)
+        den$v <- pmax(den$v, minLambda)
+    }
+
+    # --- Definisce tipi cellulari da usare ---
+    if (is.null(from)) from <- levels(data$cellType)
+    if (is.null(to)) to <- levels(data$cellType)
+    use <- data$cellType %in% c(from, to)
+    if (all(!use)) return(NA)
+    data <- data[use, ]
+    X <- X[use, ]
+
+    # --- Calcola le coppie di punti ---
+    p <- spatstat.geom::closepairs(X, max(Rs), what = "ijd", distinct = FALSE)
+    p$j <- data$cellID[p$j]
+    p$i <- data$cellID[p$i]
+    cT <- data$cellType
+    names(cT) <- data$cellID
+    p$d <- cut(p$d, Rs, labels = Rs[-1], include.lowest = TRUE)
+    p$wt <- rep(1, length(p$d))
+
+    # --- Pesi in base alla densità se sigma è usato ---
+    if (!is.null(sigma)) {
+        np <- spatstat.geom::nearest.valid.pixel(X$x, X$y, den)
+        w <- den$v[cbind(np$row, np$col)]
+        names(w) <- data$cellID
+        p$wt <- 1 / w[p$j] * mean(w)
+        rm(np)
+    }
+
+    # --- Intensità lambda per tipo cellulare ---
+    lam <- table(data$cellType) / spatstat.geom::area(X)
+    p$cellTypeJ <- cT[p$j]
+    p$cellTypeI <- cT[p$i]
+    p$i <- factor(p$i, levels = data$cellID)
+
+    # --- Calcolo curva L con correzione di bordo ---
+    if (edgeCorrect) {
+        rList <- lapply(Rs[-1], function(x) {
+            p2 <- p
+            edge <- spicyR:::borderEdge(X, x)
+            edge <- as.data.frame(edge)
+            colnames(edge) <- x
+            edge$i <- data$cellID
+            edge <- tidyr::pivot_longer(edge, -.data$i, names_to = "d")
+            p2 <- as.data.frame(p2)
+            p2 <- p2[as.numeric(as.character(p2$d)) <= x, ]
+            p2$d <- as.character(x)
+            p2$i <- as.character(p2$i)
+            edge$i <- as.character(edge$i)
+            edge$d <- as.character(edge$d)
+            p2 <- dplyr::left_join(p2, edge, c("i", "d"))
+            p2 <- p2[p2$i != p2$j, ]
+            use <- p2$cellTypeI %in% from & p2$cellTypeJ %in% to
+            p2 <- p2[use, ]
+
+            # Se non ci sono coppie valide, salta
+            if (nrow(p2) == 0) {
+                message("Nessuna coppia valida per r = ", x)
+                return(NULL)
+            }
+
+            # Calcola L per questo raggio
+            Ldf <- spicyR:::inhomL(p2, lam, X, x)
+            if (is.null(Ldf) || nrow(Ldf) == 0) {
+                message("inhomL() vuoto per r = ", x)
+                return(NULL)
+            }
+
+            # Aggiungi il raggio
+            Ldf$r <- x
+            Ldf
+        })
+
+        # Combina tutto in un unico data.frame
+        rList <- rList[!sapply(rList, is.null)]
+        if (length(rList) == 0) return(NA)
+        r <- do.call("rbind", rList)
+
+        # Se manca la colonna r, la crea
+        if (!"r" %in% colnames(r)) {
+            r$r <- NA_real_
+        }
+
+        # Ordina i risultati e restituisci la curva completa
+        r <- dplyr::arrange(r, cellTypeI, cellTypeJ, r)
+        return(r)
+    }
+
+    # --- Caso senza correzione bordo ---
+    else {
+        p <- as.data.frame(p)
+        p$value <- 1
+        p$d <- factor(p$d, levels = Rs[-1])
+        p <- p[p$i != p$j, ]
+        use <- p$cellTypeI %in% from & p$cellTypeJ %in% to
+        p <- p[use, ]
+        if (nrow(p) == 0) return(NA)
+        r <- spicyR:::inhomL(p, lam, X, Rs)
+        if (!"r" %in% colnames(r)) r$r <- Rs[-1]
+        return(r)
+    }
+}
+
+```
+
+#getPairwise modificata
+```{r}
+
+getPairwise_mod <- function (cells, imageID = "imageID", cellType = "cellType", 
+    spatialCoords = c("x", "y"), r = NULL, sigma = NULL, from = NULL, 
+    to = NULL, cores = 1, minLambda = 0.05, window = "convex", 
+    window.length = NULL, edgeCorrect = TRUE, includeZeroCells = FALSE, 
+    BPPARAM = NULL, imageIDCol = imageID, cellTypeCol = cellType, 
+    spatialCoordCols = spatialCoords, nCores = cores, Rs = r) 
+{
+    user_args = as.list(match.call())[-1]
+    tryCatch({
+        user_vals = lapply(user_args, eval, envir = parent.frame())
+        spicyR:::argumentChecks("getPairwise", user_vals)
+    }, error = function(e) {
+        if (grepl("object 'cells' not found", e$message)) {
+            message("Skipping argument checks as `getPairwise()` is being called within `spicy()`")
+        }
+        else {
+            stop(e)
+        }
+    })
+    if (is(cells, "SummarizedExperiment")) { #estrae i dati di interesse
+        cells <- spicyR:::.format_data(cells, imageID, cellType, spatialCoords, 
+            FALSE)
+    }
+    if (is.null(BPPARAM)) { #imposta parallelizzazione
+        if (cores > 1 && .Platform$OS.type != "windows") {
+            BPPARAM = BiocParallel::MulticoreParam(workers = cores)
+        }
+        else if (cores > 1) {
+            BPPARAM = BiocParallel::SnowParam(workers = cores)
+        }
+        else {
+            BPPARAM = BiocParallel::SerialParam()
+        }
+    }
+    cells2 <- spicyR:::getCellSummary(cells, bind = FALSE) #separa i campioni
+    if (is.null(from)) 
+        from <- levels(cells2$cellType)
+    if (is.null(to)) 
+        to <- levels(cells2$cellType)
+    pairwiseVals <- BiocParallel::bplapply(cells2, inhomLPair_mod, #la vera funzione che fa la curva L
+        Rs = Rs, sigma = sigma, window = window, window.length = window.length, 
+        minLambda = minLambda, from = from, to = to, edgeCorrect = edgeCorrect, 
+        includeZeroCells = includeZeroCells, BPPARAM = BPPARAM)
+    return(do.call("rbind", pairwiseVals))
+    unlist(pairwiseVals)
+}
+
+```
+
+#Curve L per ogni campione
+```{r}
+
+all_Lcurves <- list()
+unique_samples <- unique(combined_spe_nosham$sample_id)
+
+for (sample in unique_samples) {
+  selected_cells <- combined_spe_nosham[,combined_spe_nosham$sample_id == sample]
+  
+  Lcurve <- getPairwise_mod(
+    selected_cells,
+    imageID = "sample_id",
+    cellType = "cell_type",
+    spatialCoords = c("pxl_col_in_fullres", "pxl_row_in_fullres"),
+    from = "Myonuclei_IIb",
+    to   = "Myonuclei_Trim63"
+  )
+  
+  all_Lcurves[[as.character(sample)]] <- Lcurve
+}
+
+
+#NB: eventualmente modificare i valori per il raggio
+#tenendo conto che il raggio "totale" (metà range)
+#è 6500/8000 per il primo campione e che 
+#si tratta di una misura aggregata
+#e che sotto i 50 compresi non trova nulla
+
+for (sample in names(all_Lcurves)) {
+  Lcurve <- all_Lcurves[[sample]]
+  p <- ggplot(Lcurve, aes(x = r, y = wt)) +
+    geom_line(size = 1) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+    geom_hline(yintercept = 1, linetype = "dashed", color = "gray50") +
+    theme_minimal(base_size = 14) +
+    labs(
+      title = paste("Curva L(r) - Campione:", sample),
+      x = "Distanza r",
+      y = "L(r)"
+    )
+  print(p)
+  # ggsave(paste0("Lcurve_", sample, ".png"), plot = p, width = 6, height = 4)
+}
+
+#"normalizzo" L(r) - r così l'asse y=0 diventa la linea di Poisson
+for (sample in names(all_Lcurves)) {
+  Lcurve <- all_Lcurves[[sample]]
+  Lcurve <- Lcurve %>%
+    mutate(LminusR = wt - r)
+  p <- ggplot(Lcurve, aes(x = r, y = LminusR, color = interaction(cellTypeI, cellTypeJ))) +
+    geom_line(size = 1) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+    theme_minimal(base_size = 14) +
+    labs(
+      title = paste("Curva L(r) - r - Campione:", sample),
+      x = "Distanza r",
+      y = "L(r) - r",
+      color = "Coppia cellulare"
+    )
+  print(p)
+  # ggsave(paste0("Lcurve_", sample, ".png"), plot = p, width = 6, height = 4)
+}
+
+
+```
+
+

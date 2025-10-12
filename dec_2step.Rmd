@@ -1,0 +1,228 @@
+---
+title: "dec_2step"
+output: html_document
+date: "2025-09-15"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(arrow)
+library(Banksy)
+library(BiocParallel)
+library(DropletUtils)
+library(dplyr)
+library(edgeR)
+library(ggplot2)
+library(graphics)
+library(igraph)
+library(jsonlite)
+library(Matrix)
+library(OSTA.data)
+library(patchwork)
+library(pheatmap)
+library(S4Vectors)
+library(scDblFinder)
+library(scater)
+library(scran)
+library(scuttle)
+library(SingleCellExperiment)
+library(SpatialExperiment)
+library(SummarizedExperiment)
+library(tidyr)
+library(VisiumIO)
+library(spacexr)
+library(SpotSweeper)
+library(ggspavis)
+```
+
+#CLASSIFIED_PARTIAL_24.RDS FILE SALVATO CON LE 2 CLASSIFICAZIONI
+
+#DECONVOLUZIONE IN 2 STEP 
+After selecting pixels in which RCTD was confident (threshold??) of the presence
+of the cell type of interest (myonuclei), we rerun RCTD on these pixels (select)
+using a larger set of cellular subtypes (subclusters, select in the reference as well)
+we constrained the broad classes appearing on each pixel to be the same as the ones
+originally detected (if I only keep myon. this is not necessary, otherwise I need to
+understand how to do it but I don't think it makes sense).
+A dire il vero starei facendo una cosa un po' diversa da quella descritta dall'articolo.
+```{r}
+
+sce_ref <- readRDS("~/multiome_sce.rds")
+load("~/subset_list.RData")
+
+rctd_2step <- function(subset_list, sce_ref) {
+  set.seed(9237)
+  results_list <- list()
+  
+  for (i in seq_along(subset_list)) {
+    spe <- subset_list[[i]]
+    
+    # Preparazione rownames
+    rownames(spe) <- rowData(spe)$Symbol
+    rownames(spe) <- make.unique(rownames(spe))
+    
+    ## ---- PRIMA CLASSIFICAZIONE ----
+    rctd_data <- createRctd(
+      spatial_experiment = spe,
+      reference_experiment = sce_ref,
+      cell_type_col = "clusters"
+    )
+    rctd_results <- runRctd(rctd_data, rctd_mode = "multi")
+    
+    ws <- data.frame(t(as.matrix(assay(rctd_results, "weights"))))
+    ids <- names(ws)[apply(ws, 1, which.max)]
+    ids <- gsub("\\.([A-z])", " \\1", ids)
+    
+    # allineamento con colnames(spe)
+    clusters_vec <- rep(NA_character_, ncol(spe))
+    names(clusters_vec) <- colnames(spe)
+    common <- intersect(colnames(spe), rownames(ws))
+    clusters_vec[common] <- ids[match(common, rownames(ws))]
+    
+    spe$clusters <- factor(clusters_vec)
+    message("Prima classificazione completata: ", paste(levels(spe$clusters), collapse = ", "))
+    
+    
+    ## ---- SECONDA CLASSIFICAZIONE (solo Myonuclei) ----
+    spe_mio <- spe[, spe$clusters == "Myonuclei" & !is.na(spe$clusters)]
+    sce_ref_mio <- sce_ref[, sce_ref$clusters == "Myonuclei"]
+    
+    if (ncol(spe_mio) > 0 && ncol(sce_ref_mio) > 0) {
+      rctd2 <- createRctd(
+        spatial_experiment = spe_mio,
+        reference_experiment = sce_ref_mio,
+        cell_type_col = "subclusters"
+      )
+      results2 <- runRctd(rctd2, rctd_mode = "multi")
+      
+      ws2 <- data.frame(t(as.matrix(assay(results2, "weights"))))
+      ids2 <- names(ws2)[apply(ws2, 1, which.max)]
+      ids2 <- gsub("\\.([A-z])", " \\1", ids2)
+      
+      # allineamento con colnames(spe_mio)
+      subclusters_vec <- rep(NA_character_, ncol(spe_mio))
+      names(subclusters_vec) <- colnames(spe_mio)
+      common2 <- intersect(colnames(spe_mio), rownames(ws2))
+      subclusters_vec[common2] <- ids2[match(common2, rownames(ws2))]
+      
+      spe_mio$subclusters <- factor(subclusters_vec)
+      
+      # merge subclusters in spe
+      spe$subclusters <- spe$clusters
+      valid_idx <- !is.na(spe_mio$subclusters)
+      levels(spe$subclusters) <- c(levels(spe$subclusters), levels(spe_mio$subclusters))
+      spe$subclusters[colnames(spe_mio)[valid_idx]] <- spe_mio$subclusters[valid_idx]
+      spe$subclusters <- droplevels(spe$subclusters)
+      print(table(spe$subclusters))  
+
+    }
+    
+    results_list[[i]] <- spe
+    saveRDS(results_list, file = paste0("classified_partial_", i, ".rds"))
+  }
+  
+  return(results_list)
+}
+
+classified_list <- rctd_2step(subset_list, sce_ref)
+names(classified_list) <- names(subset_list)
+# classified_list
+# table(classified_list[[24]]$subclusters)
+
+``` 
+
+#CONFRONTO CLASSIFICAZIONI
+
+#barplot per campione
+```{r}
+
+# Costruisci un data frame con tutte le proporzioni per ogni oggetto
+prop_df <- lapply(names(classified_list), function(name) {
+  spe <- classified_list[[name]]
+  tab <- table(spe$subclusters)
+  prop <- prop.table(tab)
+  data.frame(
+    sample = name,
+    subclusters = names(prop),
+    proportion = as.numeric(prop)
+  )
+}) |> bind_rows()
+
+your_color_vector <- c(
+    "Endothelial" = "#0072B2",       # blu vivo
+    "FAPs" = "#009E73",              # verde vivo
+    "Immune_Cells" = "#D55E00",      # arancione-rosso
+    "MuSC" = "#E69F00",              # arancione
+    "Myonuclei_IIb" = "#CC79A7",     # magenta
+    "Myonuclei_IIx" = "#56B4E9",     # azzurro chiaro
+    "Myonuclei_IIx_IIa" = "#F0E442", # giallo
+    "Myonuclei_IIx_IIb" = "#9B59B6", # viola chiaro
+    "Myonuclei_MTJ" = "#0099B4",     # turchese
+    "Myonuclei_NMJ" = "#DDAA33",     # senape
+    "Myonuclei_Trim63" = "#CC3311",  # rosso scuro
+    "Nervous_System" = "#44AA99",    # verde acqua
+    "Pericyte" = "#AA4499",          # viola/rosa
+    "Smooth_Muscular" = "#332288",   # blu-viola scuro
+    "Tenocyte" = "#A3E635"           # verde lime
+)
+
+ggplot(prop_df, aes(x = sample, y = proportion, fill = subclusters)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = your_color_vector) +
+  theme_minimal() +
+  labs(
+    title = "Proporzioni dei sottocluster per campione",
+    x = "Campione (classified_list)",
+    y = "Proporzione",
+    fill = "Tipo Cellulare"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggsave("subclusters_proportions.png", width = 10, height = 6, dpi = 300)
+
+```
+
+#Barplot aggregato per condizione
+```{r}
+prop_df_condition <- lapply(classified_list, function(spe) {
+  data.frame(
+    tissue_type = unique(spe$tissue_type),
+    subclusters = spe$subclusters
+  )
+}) |> bind_rows() |> filter(!is.na(subclusters))
+
+prop_df_condition <- prop_df_condition %>%
+  count(tissue_type, subclusters) %>%
+  group_by(tissue_type) %>%
+  mutate(proportion = n / sum(n)) %>%
+  ungroup()
+
+ggplot(prop_df_condition, aes(x = tissue_type, y = proportion, fill = subclusters)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = your_color_vector) +
+  theme_minimal() +
+  labs(
+    title = "Proporzioni dei sottocluster per condizione",
+    x = "Condizione (tissue_type)",
+    y = "Proporzione",
+    fill = "Tipo Cellulare"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggsave("subclusters_proportions_by_condition.png", width = 10, height = 6, dpi = 300)
+
+```
+
+#CONSIDERAZIONE
+Ci sono tantissimi mionuclei 2b e si schiacciano un po' gli altri tipi cellulari 
+(alcuni spariscono proprio), probabilmente perché considerare i mionuclei tutti assieme 
+all'inizio dà + "potenza" a questo gruppo rispetto agli altri.
+
+Mostrare, se vale la pena posso proiettare sui tessuti, ma non penso.
+
+
+
+

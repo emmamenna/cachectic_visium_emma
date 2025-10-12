@@ -1,0 +1,254 @@
+---
+title: "gene_plots"
+output: html_document
+date: "2025-10-10"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(arrow)
+library(Banksy)
+library(BiocParallel)
+library(DropletUtils)
+library(dplyr)
+library(edgeR)
+library(ggplot2)
+library(graphics)
+library(igraph)
+library(jsonlite)
+library(Matrix)
+library(matrixStats)
+library(OSTA.data)
+library(patchwork)
+library(pheatmap)
+library(S4Vectors)
+library(scDblFinder)
+library(scater)
+library(scran)
+library(scuttle)
+library(SingleCellExperiment)
+library(SpatialExperiment)
+library(SummarizedExperiment)
+library(tidyr)
+library(VisiumIO)
+library(spacexr)
+library(SpotSweeper)
+library(ggspavis)
+library(openxlsx)
+library(zip)
+```
+
+#GRAFICI PER GENI MARCATORI DI IDENTITA' (quelli che definiscono i cluster) 
+#NB: i geni che funzionano in interazione a due li ho proiettati cmq separatamente
+#perché l'unica alternativa che mi viene in mente è di vedere se sono entrambi 
+#espressi sopra una certa soglia in ogni spot ma non so se e per quale soglia sia sensato.
+
+#DOTPLOT su LISTA RIDOTTA 
+```{r}
+#da grafico 1k articolo Camilla
+pb_wb7 <- readRDS("~/pb_wb7.rds")
+
+# CORREGGO EFFETTO DI BATCH ------------------------------------------------------------------------
+library(sva)
+expr <- assay(pb_wb7, "logcounts") 
+colData(pb_wb7)$block <- gsub(".*_", "", colData(pb_wb7)$sample_id)
+#table(pb_wb7$block)
+batch <- colData(pb_wb7)$block
+
+expr_combat <- ComBat(
+  dat = as.matrix(expr),  # matrice numerica
+  batch = batch,
+  par.prior = TRUE,
+  prior.plots = FALSE
+)
+
+#1. aggrega i mionuclei ------------------------------------------------------------
+colData(pb_wb7)$clusters <- ifelse(
+  grepl("^Myonuclei", colData(pb_wb7)$cell_type),
+  "Myonuclei",
+  as.character(colData(pb_wb7)$cell_type)
+)
+colData(pb_wb7)$clusters <- factor(colData(pb_wb7)$clusters)
+
+sub_geni <- c("Ttn","Pdgfra","Dcn","Myh11","Trpc3","Cacna1c","Col11a1","Mkx","Col1a1","Ptprc",
+              "F13a1","Itgam","Pax7","Kcna1","Matn2","Mbp","Mpz","Prx","Cadm1","Reln","Mmrn1",
+              "Pecam1","Kdr")
+
+df <- as.data.frame(t(expr_combat[sub_geni, , drop=FALSE])) 
+df$celltype <- colData(pb_wb7)$clusters  
+df_long <- pivot_longer(df, cols = all_of(sub_geni),
+                        names_to = "gene", values_to = "expr")
+
+# calcolo media e percentuale per ogni celltype × gene
+dot_data <- df_long %>%
+  group_by(celltype, gene) %>%
+  summarise(
+    pct_expr_combat = sum(expr > 0) / n() * 100,
+    avg_expr_combat = mean(expr[expr > 0], na.rm = TRUE),
+    .groups = "drop"
+  )
+
+p1 <- ggplot(dot_data, aes(x = gene, y = celltype)) +
+  geom_point(aes(size = pct_expr_combat, color = avg_expr_combat)) +
+  scale_color_gradient(low = "grey", high = "red") +
+  theme_bw() +
+  labs(
+    x = "Gene",
+    y = "Cell type",
+    color = "Average expression",
+    size = "% expressing"
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.text.y = element_text(size = 10),
+    panel.grid.major = element_line(color = "grey90")
+  )
+ggsave("DotPlot_completo.png", plot = p1, width = 8, height = 6, dpi = 300)
+#comunque sono i BIN, per questo sarà molto sporco anche se corretto x batch
+
+#2. solo mionuclei -------------------------------------------------------------------------------
+genes_mio <- c("Ttn","Myh4","Myh1","Myh2","Col22a1","Ache","Etv5")
+cells_sel <- pb_wb7$cell_type %in% c("Myonuclei_IIb","Myonuclei_IIx","Myonuclei_IIx_IIa",
+                                     "Myonuclei_IIx_IIb","Myonuclei_MTJ","Myonuclei_NMJ",
+                                     "Myonuclei_Trim63")
+
+expr_mio <- expr_combat[, cells_sel]
+df <- as.data.frame(t(expr_mio))
+df$sample   <- colData(pb_wb7)[cells_sel,]$sample
+df$celltype <- colData(pb_wb7)[cells_sel,]$cell_type
+
+df_long <- pivot_longer(df, cols = all_of(genes_mio),
+                        names_to = "gene", values_to = "expr")
+
+dot_data <- df_long %>%
+  group_by(celltype, gene) %>%
+  summarise(
+    pct_expr_combat = sum(expr > 0) / n() * 100,
+    avg_expr_combat = mean(expr[expr > 0], na.rm = TRUE),
+    .groups = "drop"
+  )
+
+p2 <- ggplot(dot_data, aes(x = gene, y = celltype)) +
+  geom_point(aes(size = pct_expr_combat, color = avg_expr_combat)) +
+  scale_color_gradient(low = "grey", high = "red") +
+  theme_bw() +
+  labs(
+    x = "Gene",
+    y = "Cell type",
+    color = "Average expression",
+    size = "%expressing"
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.text.y = element_text(size = 10),
+    panel.grid.major = element_line(color = "grey90")
+  )
+ggsave("DotPlot_Myonuclei.png", plot = p2, width = 6, height = 5, dpi = 300)
+
+```
+
+#Visualizzazione nel tessuto con scale separate (no confronto)
+```{r}
+load("subset_list.RData")
+data <- read.table("identity_genes_plots.txt")
+vec <- as.vector(data)
+markers <- unlist(vec[1], use.names = FALSE)
+markers
+
+outdir <- "plots" 
+dir.create(outdir, showWarnings = FALSE)
+
+for (slice_name in names(subset_list)) {
+  spe <- subset_list[[slice_name]]
+  
+  # creo la sottocartella per il campione
+  sample_dir <- file.path(outdir, slice_name)
+  dir.create(sample_dir, showWarnings = FALSE)
+  
+  expr_matrix <- counts(spe)[markers, , drop = FALSE]
+  
+  for (gene in markers) {
+    expr <- as.numeric(expr_matrix[gene, ])
+    coords <- as.data.frame(spatialCoords(spe)[colnames(spe), ])
+    coords$expr <- expr
+    
+    p <- ggplot(coords, aes(x = pxl_col_in_fullres, y = pxl_row_in_fullres, color = expr)) +
+      geom_point(size = 0.3) +
+      coord_fixed() +
+      scale_y_reverse() +
+      ggtitle(paste(slice_name, "-", gene)) +
+      theme_void() +
+      theme(plot.title = element_text(size = 8)) +
+      scale_color_gradientn(colors = rev(hcl.colors(9, "Rocket")))
+    
+    print(p)
+    
+    ggsave(
+      filename = file.path(sample_dir, paste0(gene, ".png")),
+      plot = p,
+      width = 6, height = 5, dpi = 300
+    )
+  }
+}
+```
+
+#Visualizzazione nel tessuto con scala comune per campione (per confronto)
+```{r}
+split_chunks <- function(x, n) {
+  split(x, ceiling(seq_along(x) / n))
+}
+
+for (slice_name in names(subset_list)) {
+  spe <- subset_list[[slice_name]]
+  
+  #scala comune di campione
+  expr_matrix <- counts(spe)[markers, , drop = FALSE]
+  global_min <- min(expr_matrix)
+  global_max <- max(expr_matrix)
+
+  marker_chunks <- split_chunks(markers, 24)
+  
+  for (chunk_idx in seq_along(marker_chunks)) {
+    marker_subset <- marker_chunks[[chunk_idx]]
+    
+    plot_list <- lapply(marker_subset, function(gene) {
+      expr <- as.numeric(expr_matrix[gene, ])
+      coords <- as.data.frame(spatialCoords(spe))
+      coords$expr <- expr
+      
+      ggplot(coords, aes(x = pxl_col_in_fullres, y = pxl_row_in_fullres, color = expr)) +
+        geom_point(size = 0.3) +
+        coord_fixed() +
+        scale_y_reverse() +
+        ggtitle(gene) +
+        theme_void() +
+        theme(plot.title = element_text(size = 5))
+    })
+    
+    p <- wrap_plots(plot_list, nrow = 4, ncol = 6, guides = "collect") +
+      plot_annotation(title = paste("Sample:", slice_name, "- Part", chunk_idx)) &
+      theme(
+        legend.key.width = unit(0.5, "lines"),
+        legend.key.height = unit(1, "lines"),
+        plot.title = element_text(hjust = 0.5, size = 14),
+        strip.text = element_text(size = 5)
+      ) &
+      scale_color_gradientn(
+        colors = rev(hcl.colors(9, "Rocket")),
+        limits = c(global_min, global_max)   # scala unica per campione
+      )
+    
+    print(p)
+    ggsave(
+      paste0("plots_", slice_name, "_part", chunk_idx, ".png"),
+      p, width = 12, height = 9, dpi = 300
+    )
+  }
+}
+
+```
+
+

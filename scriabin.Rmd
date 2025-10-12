@@ -1,0 +1,139 @@
+---
+title: "scriabin"
+output: html_document
+date: "2025-09-26"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(scriabin)
+library(Seurat)
+#library(SeuratData)
+library(tidyverse)
+library(pbapply)
+library(SpatialExperiment)
+library(SingleCellExperiment)
+options(timeout = max(600, getOption("timeout")))  # 10 minuti
+scriabin::load_nichenet_database()
+library(plyr)
+```
+#PREPARAZIONE DEL DATASET
+MA BISOGNA FILTRARE I GENI PER FARE SCRIBIN? NO
+CellChat: nel tuo workflow stai passando uno SCE già filtrato sui geni
+(p.es. tenendo quelli espressi in ≥X% cell*cluster). Va benissimo:
+CellChat calcola probabilità d’interazione su medie di gruppo e
+beneficia di togliere i geni chiaramente “morti”.
+Scriabin: qui è meglio non fare un filtraggio troppo aggressivo sui geni,
+perché lo scoring della CCC è per-cella e si basa sull’espressione
+(anche rara) di ligandi/recettori. Se elimini un ligando o un recettore
+poco espresso, rischi di azzerare intere interazioni.
+```{r}
+
+load("~/subset_list.RData")
+for (nm in names(subset_list)){
+  spe <- subset_list[[nm]]
+  colData(spe)$sample_id <- rep(nm, ncol(spe))  
+  subset_list[[nm]] <- spe
+}
+#filtro gli NA
+subset_list <- lapply(subset_list, function(spe) {
+   keep <- !is.na(spe$cell_type) & colSums(counts(spe)) > 0
+   spe[,keep]
+})
+
+#SCRIABIN REGGE IL CONFRONTO SOLO PER 2 CONDIZIONI
+sham_c26_list <- subset_list[names(subset_list) %in% c("sham_b1","sham_b3","sham_b6","c26_b2","c26_b4","c26_b6")]
+sham_and_c26 <- do.call(cbind, sham_c26_list)
+colData(sham_and_c26)$block <- gsub(".*_", "", colData(sham_and_c26)$sample_id)
+
+#passa da single-cell exp
+sce_scriabin <- SingleCellExperiment(
+  assays = list(counts = counts(sham_and_c26)),
+  colData = colData(sham_and_c26)
+)
+
+#filtro solo i geni non espressi (vedi sotto)
+keep_basic <- rowSums(counts(sce_scriabin) > 0) > 0
+sce_scriabin <- sce_scriabin[keep_basic, ]
+
+#Converto a Seurat
+seu <- as.Seurat(sce_scriabin, counts = "counts", data = NULL)
+seu <- RenameAssays(seu, originalexp = "RNA")
+#ok fin qua
+
+#serve per avere la pca
+seu <- SCTransform(seu, verbose = FALSE) %>%
+  RunPCA(verbose = FALSE) %>%
+  FindNeighbors(dims = 1:30, verbose = FALSE) %>%
+  FindClusters(verbose = FALSE) %>%
+  RunUMAP(dims = 1:30, verbose = FALSE)
+
+# X11()
+# DimPlot(seu, label = T, repel = T, group.by = "condition") + NoLegend()
+# DimPlot(seu, label = T, repel = T, group.by = "seurat_clusters") + NoLegend()
+# DimPlot(seu, label = T, repel = T, group.by = "clusters") + NoLegend()
+# # I GRAFICI EVIDENZIANO XK SIA IMPORTANTE INTEGRARE
+
+```
+
+# DATASET BINNING 
+```{r}
+set.seed(123)
+
+levels(seu@meta.data$cell_type)
+table(seu@meta.data$cell_type,seu@meta.data$sample_id)
+
+#AGGREGO IN 3 MACRO-CATEGORIE TOTALI
+seu@meta.data$clusters <- mapvalues(
+  seu@meta.data$cell_type,
+  from = c("Myonuclei_IIb","Myonuclei_IIx","Myonuclei_IIx_IIa","Myonuclei_IIx_IIb",
+           "Myonuclei_MTJ","Myonuclei_NMJ","Myonuclei_Trim63",
+           "Endothelial","FAPs","Pericyte","Smooth_Muscular","Tenocyte"),
+  to   = c(rep("Myonuclei",7),
+           rep("Stromal",5))
+)
+rare_types <- c("MuSC","Nervous_System","Immune_Cells")
+seu@meta.data$clusters <- ifelse(
+  seu@meta.data$clusters %in% rare_types, "Other",
+  as.character(seu@meta.data$clusters)
+)
+seu@meta.data$clusters <- factor(seu@meta.data$clusters)
+
+seu@meta.data$tissue_type <- droplevels(seu@meta.data$tissue_type)
+
+# Ora esegui il binning
+seu <- BinDatasets(
+  seu,
+  split.by = "tissue_type",
+  dims = 1:30,
+  coarse_cell_types = "clusters",
+  sigtest_cell_types = "clusters"
+)
+
+save(seu,file="seu_bin.RData")
+#seu@meta.data$bins
+
+# Quando specifichiamo coarse_cell_types = "coarse_ident", stiamo imponendo 
+# che i bin vengano formati all’interno di macro-categorie definite da 
+# coarse_ident.
+# USA I 3K + VARIABILI COME SCRIPT INTEGRAZIONE (GUARDA Lì X
+# REASTARE COERENTE)
+
+```
+
+Now that we have binned the dataset, let’s identify which bins have different magnitudes of CCC between the two datasets. We’ll do this first by generating interaction graphs for both datasets, and then testing which bins have cells with significantly different degrees of CCC. Then, we can take the significantly perturbed bins and find out what is different about their CCC.
+PROBLEMA: Al momento sono supportati solo confronti longitudinali e binari.
+```{r}
+#ESPLODE
+seu_split <- SplitObject(seu, split.by = "tissue_type")
+sum_ig <- AssembleInteractionGraphs(seu, by = "prior", split.by = "tissue_type")
+
+seu_split <- pblapply(seu_split, function(x) {BuildPriorInteraction(x, correct.depth = T)})
+ogig <- lapply(seu_split, function(x) {
+  as.matrix(x@graphs$prior_interaction)
+})
+
+```

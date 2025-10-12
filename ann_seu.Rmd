@@ -1,0 +1,219 @@
+---
+title: "ann-seu"
+output: html_document
+date: "2025-07-04"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Librerie
+```{r}
+library(Seurat)
+library(Signac)
+library(dplyr)
+library(ggplot2)
+library(scDblFinder)
+library(scuttle)
+library(scran)
+library(Matrix)
+library(jsonlite)
+library(arrow)
+library(SummarizedExperiment)
+library(S4Vectors)
+library(SpatialExperiment)
+library(VisiumIO)
+library(edgeR)
+library(SingleCellExperiment)
+```
+
+#Acquisizione blocchi (NON RIFARE)
+```{r, include=FALSE}
+
+Visium2HD <- function(bin = "008", blocco_num = "blocco1", directory =  "~/space_out/") {
+  # definiamo la directory
+  dir <- paste0(directory, "/", blocco_num, "/outs")
+  
+  spe <- TENxVisiumHD(
+    spacerangerOut = dir,
+    processing = "raw",
+    images = c("hires", "lowres"),
+    bin_size = bin,
+    jsonFile = "scalefactors_json.json",
+    tissuePattern = "tissue_positions.parquet",
+    spatialCoordsNames = c("pxl_col_in_fullres", "pxl_row_in_fullres")
+  ) |> import()
+  
+  return(spe)
+}
+
+#METTO 16 BIN!!!!!!!!!!!!!!!!!!
+
+load("~/liste_tissue_cond_008.RData")
+#load("~/liste_tissue_cond_016.RData")
+
+```
+
+#FILTRAGGIO (NON RIFARE)
+```{r}
+
+processa_blocco <- function(blocco_num, lista_contissue) {
+  blocco_nome <- paste0("blocco", blocco_num)
+  speHD <- Visium2HD(bin = "016", blocco = blocco_nome)
+  
+  #Filtro per in/out of tissue (da qupath) e distinguo i 3 campioni
+  speHD$tissue_type <- lista_contissue[[blocco_nome]]$exp_condition
+  speHD_f <- speHD[, lista_contissue[[blocco_nome]]$in_tissue == TRUE]
+  rm(speHD)
+  
+  #Creo due colonne per portarmi dietro le informazioni sul numero
+  #totale di conteggi e di geni rilevati per ogni spot.
+  colData(speHD_f)$ncounts <- colSums(assay(speHD_f))
+  colData(speHD_f)$ngenes <- Matrix::colSums(assay(speHD_f) > 0)
+  
+  # Scatterplot
+  plot(colData(speHD_f)$ncounts, colData(speHD_f)$ngenes,
+       main = paste("Blocco", blocco_num),
+       xlab = "ncounts", ylab = "ngenes")
+  #fare la stessa cosa anche con le info sui pixel
+  
+  # Filtro su base UMI e geni
+  speHD_f <- speHD_f[, colData(speHD_f)$ncounts >= quantile(colData(speHD_f)$ncounts, 0.05) &
+                       colData(speHD_f)$ngenes >= quantile(colData(speHD_f)$ngenes, 0.05)]
+  
+  assign(paste0("speHD", blocco_num, "_f"), speHD_f, envir = .GlobalEnv)
+}
+
+for (b in c(1:7, 9)) {
+  processa_blocco(b, lista_contissue)
+}
+
+```
+
+#Creo un oggetto sce per ogni singolo campione
+```{r}
+
+crea_sce <- function(spe_obj, block) {
+  rownames(spe_obj) <- rowData(spe_obj)$Symbol
+  tissue_type <- unique(spe_obj$tissue_type)
+  sce_list <- list()
+  # Per ogni tipo di tessuto, creo un oggetto SingleCellExperiment
+  for (sample in tissue_type) {
+    name <- paste0(sample, "_", block)
+    sce_list[[name]] <- SingleCellExperiment(assays = list(
+      counts = counts(spe_obj)[, spe_obj$tissue_type == sample]
+    ))
+  }
+  return(sce_list)
+}
+sce_hd1 <- crea_sce(speHD1_f, "b1")
+sce_hd2 <- crea_sce(speHD2_f, "b2")
+sce_hd3 <- crea_sce(speHD3_f, "b3")
+sce_hd4 <- crea_sce(speHD4_f, "b4")
+sce_hd5 <- crea_sce(speHD5_f, "b5")
+sce_hd6 <- crea_sce(speHD6_f, "b6")
+sce_hd7 <- crea_sce(speHD7_f, "b7")
+sce_hd9 <- crea_sce(speHD9_f, "b9")
+
+#aggiungere già esplicitamente l'info blocco?
+
+sce_list <- c(sce_hd1,sce_hd2,sce_hd3,sce_hd4,sce_hd5,sce_hd6,sce_hd7,speHD9_f)
+
+```
+
+#Normalizzo i singoli campioni
+```{r}
+
+seurat_list <- lapply(names(sce_list), function(nome_obj) {
+  sce <- sce_list[[nome_obj]]
+  obj_seu <- as.Seurat(sce, counts = "counts", data = NULL)
+  obj_seu$orig.ident <- nome_obj
+  obj_seu <- RenameAssays(obj_seu, originalexp = "RNA")
+  obj_seu <- SCTransform(obj_seu, verbose = FALSE)
+  return(obj_seu)
+})
+
+names(seurat_list) <- names(sce_list)
+
+```
+
+#Integro i 3 campioni del blocco
+```{r}
+
+# Set default assay to SCT for all objects in list
+for (i in seq_along(seurat_list)) {
+  DefaultAssay(seurat_list[[i]]) <- "SCT"
+}
+
+# Choose the features to use when integrating multiple datasets.
+features <- SelectIntegrationFeatures(seurat_list, nfeatures = 3000)
+
+# Prepare an object list normalized with sctransform for integration.
+seurat_list <- PrepSCTIntegration(seurat_list, anchor.features = features)
+
+#Calcolo la pca per ogni oggetto sulla base delle feature trovate
+seurat_list <- lapply(X = seurat_list, FUN = function(x) {
+  x <- RunPCA(x, features = features, verbose = FALSE)
+})
+
+#sarebbe da selezionare le cp con un minimo di criterio...
+anchors <- FindIntegrationAnchors(object.list = seurat_list, normalization.method = "SCT",
+                                  anchor.features = features, dims = 1:10,
+                                  reduction = "rpca", k.anchor = 10)
+
+spat_int <- IntegrateData(anchorset = anchors, normalization.method = "SCT",
+                          new.assay.name = "integratedRNA", dims = 1:10)
+
+spat_int <- RunPCA(spat_int, npcs = 10, verbose = FALSE)
+spat_int <- RunUMAP(spat_int, reduction = "pca", dims = 1:10)
+
+```
+
+#CLUSTERING 
+non credo di dover fare altro prima perché gli altri comandi sono per l'ATAC
+```{r}
+#set.seed(037)
+spat_int <- FindNeighbors(spat_int, reduction = "pca", dims = 1:10)
+spat_int <- FindClusters(spat_int, resolution = 0.8)
+#nel multiome murino mi pare ci siano 16 cluster
+#aggiusto la resolution o la tengo così com'è? (0.8)
+
+table(spat_int$orig.ident)
+
+#UMAP by sample
+# p1 <- DimPlot(spat_int, reduction = "umap", group.by = "orig.ident", repel = TRUE, label = FALSE) + NoLegend() + ggtitle("RNA")+ theme_classic(base_size = 10) + theme(legend.position = "none")
+# p1
+
+# UMAP by cluster
+# p2 <- DimPlot(spat_int, reduction = "umap", group.by = "seurat_clusters",label = TRUE, repel = TRUE)+
+#   NoLegend()+ labs(x = "UMAP1", y = "UMAP2") + ggtitle("") 
+# p2
+
+``` 
+
+#GENI MARCATORI
+```{r}
+DefaultAssay(mult_comb) <- "SCT"
+markers <- read.table("cachectic_markers.txt", header = T)
+head(markers)
+table(markers$Cell_type) #9 tipi cellulari
+marker_genes <- markers$Gene
+
+p3 <- DotPlot(object = mult_comb, features = marker_genes, scale = FALSE, assay = "SCT")+ RotatedAxis() +  scale_color_continuous(low = "grey", high = "red")
+p3
+
+p4 <- DotPlot(object = mult_comb, features = marker_genes, assay = "SCT")+ RotatedAxis() +  scale_color_continuous(low = "grey", high = "red")
+p4
+
+DefaultAssay(mult_comb) <- "SCT"
+heat <- DoHeatmap(mult_comb, features=marker_genes, size = 3, angle = 90, draw.lines = TRUE,
+                  lines.width=10) + NoLegend() +
+  scale_fill_gradientn(colors = c("lightblue", "lightgrey", "red"))
+heat
+marker_genes %in% rownames(mult_comb[["SCT"]]@scale.data)
+
+
+``` 
+
+
