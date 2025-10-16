@@ -78,6 +78,8 @@ subset_list <- lapply(subset_list, function(spe) {
 })
 #senza filtraggio dei geni è eterna
 
+#NB: SALVATO SUBSET_LIST FILTRATA E FILTRATA + SPANORM
+
 ```
 
 #CELL CHAT SU UN CAMPIONE ALLA VOLTA
@@ -109,6 +111,7 @@ spatial.factors <- data.frame(
 cellchat_list <- lapply(subset_list, function(spx) {
   sce <- as(spx, "SingleCellExperiment")
   chat <- createCellChat(object = sce,
+                         datatype = "spatial",
                          group.by = "cell_type",
                          coordinates = spatialCoords(spx),
                          spatial.factors = spatial.factors)
@@ -118,12 +121,14 @@ cellchat_list <- lapply(subset_list, function(spx) {
   chat <- subsetData(chat)
   chat <- identifyOverExpressedGenes(chat)
   chat <- identifyOverExpressedInteractions(chat)
-  chat <- computeCommunProb(chat, type = "triMean")
-  chat <- filterCommunication(chat, min.cells = 5)
+  chat <- computeCommunProb(chat, type = "triMean", scale.distance = 0.1, contact.dependent = FALSE)
   chat <- computeCommunProbPathway(chat)
   chat <- aggregateNet(chat)
   chat
 })
+
+#CONTACT DEPENDENT TRUE O FALSE? INTANTO METTO FALSE
+#mi dice di alzare scale.distance
 
 lapply(cellchat_list, function(x){
   df.net <- subsetCommunication(x, slot.name = "netP")

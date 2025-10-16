@@ -1,0 +1,177 @@
+---
+title: "GSEA"
+output: html_document
+date: "2025-10-15"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(SingleCellExperiment)
+library(SummarizedExperiment)
+library(scuttle)
+library(edgeR)
+library(RUVSeq)
+library(scMerge)
+library(clusterProfiler)
+library(enrichplot)
+library(ggplot2)
+library(openxlsx)
+library(dplyr)
+library(stringr)
+library(AnnotationDbi)
+library(pathview)
+library(org.Mm.eg.db)
+```
+
+#Riprendo la DEG solo per C26 VS SHAM e guardo i TRIM
+Comunque i Trim negli sham sono pochissimi... il problema è sempre quello, penso
+sarebbe da fare per le DEG fatte sul contrasto "misto" coi 2b degli sham.
+```{r}
+pb_mult <- readRDS("~/pb_wb7.rds")
+pb_mult <- pb_mult[, pb_mult$tissue_type %in% c("sham","c26")]
+ct_pb <- pb_mult[, pb_mult$cell_type == "Myonuclei_Trim63"]
+ct_pb$tissue_type <- droplevels(ct_pb$tissue_type)
+
+y <- DGEList(counts(ct_pb), samples = as.data.frame(colData(ct_pb)))
+keep <- filterByExpr(y, group = y$samples$tissue_type)
+y <- y[keep,, keep.lib.sizes=FALSE]
+y <- calcNormFactors(y) 
+design <- model.matrix(~ 0 + tissue_type, y$samples)
+y <- estimateDisp(y, design)
+fit <- glmFit(y, design)
+contrast <- makeContrasts(contrasts = "tissue_typec26 - tissue_typesham", levels = design)
+lrt <- glmLRT(fit, contrast = contrast)
+top <- topTags(lrt, n = Inf)$table
+top$SYMBOL <- rownames(top)
+
+```
+
+```{r}
+se <- SummarizedExperiment(assays = list(counts = y$counts),
+                             colData = y$samples)
+assay(se, "norm") <- cpm(y, log = TRUE, prior.count = 1)
+se$GROUP <- ifelse(se$tissue_type == "c26", 1, 0)
+
+rowData(se)$PVAL     <- top$PValue[match(rownames(se), rownames(top))]
+rowData(se)$FC       <- top$logFC[match(rownames(se), rownames(top))]
+rowData(se)$ADJ.PVAL <- top$FDR[match(rownames(se), rownames(top))]
+rowData(se)$SYMBOL   <- top$SYMBOL[match(rownames(se), rownames(top))]
+
+geneList <- rowData(se)$FC; names(geneList) <- rowData(se)$SYMBOL
+geneList <- geneList[!is.na(geneList) & !is.na(names(geneList))]
+geneList <- tapply(geneList, names(geneList), mean)
+
+make_geneList_kegg <- function(logFC_named_by_SYMBOL) {
+  # SYMBOL -> ENTREZ
+  ids <- suppressMessages(
+    bitr(names(logFC_named_by_SYMBOL),
+         fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Mm.eg.db)
+  )
+  v <- logFC_named_by_SYMBOL[ids$SYMBOL]
+  names(v) <- ids$ENTREZID
+  v <- v[!is.na(v) & !is.na(names(v))]
+  sort(v, decreasing = TRUE)
+}
+
+geneList <- make_geneList_kegg(geneList)
+
+gsea_sig <- gseKEGG(geneList = geneList, organism = "mmu",
+            pvalueCutoff = 0.05, verbose = FALSE)
+gsea_sig@result
+res_df <- as.data.frame(gsea_sig@result)
+wb <- createWorkbook()
+addWorksheet(wb, "GSEA_Results")
+writeData(wb, sheet = "GSEA_Results", x = res_df, rowNames = TRUE)
+saveWorkbook(wb, file = "gsea_results.xlsx", overwrite = TRUE)
+
+```
+ 
+#trim vs 2b (senza blocco7)
+```{r}
+pb_mult <- readRDS("~/pb_wb7.rds")
+pb_mult$group <- paste0(pb_mult$cell_type, "_", pb_mult$tissue_type)
+pb_sub <- pb_mult[, pb_mult$group %in% c("Myonuclei_Trim63_c26", "Myonuclei_IIb_sham")]
+pb_sub$group <- factor(pb_sub$group, levels = c("Myonuclei_IIb_sham", "Myonuclei_Trim63_c26"))
+
+y <- DGEList(counts(pb_sub), samples = as.data.frame(colData(pb_sub)))
+keep <- filterByExpr(y, group = y$samples$group)
+y <- y[keep,, keep.lib.sizes=FALSE]
+y <- calcNormFactors(y)
+design <- model.matrix(~ group, data=y$samples)
+y <- estimateDisp(y, design)
+fit <- glmFit(y, design)
+lrt <- glmLRT(fit, coef = 2)
+top <- topTags(lrt, n = Inf)$table
+top$SYMBOL <- rownames(top)
+
+top$significant <- top$FDR < 0.05
+sig <- top[top$significant, ]
+sig_up <- sig[sig$logFC >= 0, ]
+sig_down <- sig[sig$logFC < 0, ]
+  
+wb <- createWorkbook()
+addWorksheet(wb, "Tutti_geni")
+writeData(wb, "Tutti_geni", res, rowNames = TRUE)
+addWorksheet(wb, "Significativi")
+writeData(wb, "Significativi", sig, rowNames = TRUE)
+addWorksheet(wb, "Upregolati")
+writeData(wb, "Upregolati", sig_up, rowNames = TRUE)
+addWorksheet(wb, "Downregolati")
+writeData(wb, "Downregolati", sig_down, rowNames = TRUE)
+saveWorkbook(wb,"trimc26_2bsham.xlsx", overwrite = TRUE)
+  
+gene_summary <- data.frame(
+    Geni_considerati = nrow(top),
+    Geni_significativi = nrow(sig),
+    Upregolati = nrow(sig_up),
+    Downregolati = nrow(sig_down)
+)
+  
+gene_summary
+  
+```
+
+```{r}
+se <- SummarizedExperiment(assays = list(counts = y$counts),
+                             colData = y$samples)
+assay(se, "norm") <- cpm(y, log = TRUE, prior.count = 1)
+se$GROUP <- ifelse(se$tissue_type == "c26", 1, 0)
+
+rowData(se)$PVAL     <- top$PValue[match(rownames(se), rownames(top))]
+rowData(se)$FC       <- top$logFC[match(rownames(se), rownames(top))]
+rowData(se)$ADJ.PVAL <- top$FDR[match(rownames(se), rownames(top))]
+rowData(se)$SYMBOL   <- top$SYMBOL[match(rownames(se), rownames(top))]
+
+geneList <- rowData(se)$FC; names(geneList) <- rowData(se)$SYMBOL
+geneList <- geneList[!is.na(geneList) & !is.na(names(geneList))]
+
+make_geneList_kegg <- function(logFC_named_by_SYMBOL) {
+  # SYMBOL -> ENTREZ
+  ids <- suppressMessages(
+    bitr(names(logFC_named_by_SYMBOL),
+         fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Mm.eg.db)
+  )
+  v <- logFC_named_by_SYMBOL[ids$SYMBOL]
+  names(v) <- ids$ENTREZID
+  v <- v[!is.na(v) & !is.na(names(v))]
+  sort(v, decreasing = TRUE)
+}
+
+geneList <- make_geneList_kegg(geneList)
+
+gsea_sig <- gseKEGG(geneList = geneList, organism = "mmu",
+            pvalueCutoff = 0.05, verbose = FALSE)
+gsea_sig@result
+res_df <- as.data.frame(gsea_sig@result)
+wb <- createWorkbook()
+addWorksheet(wb, "GSEA_Results")
+writeData(wb, sheet = "GSEA_Results", x = res_df, rowNames = TRUE)
+saveWorkbook(wb, file = "gsea_trim_2b.xlsx", overwrite = TRUE)
+
+```
+
+
+

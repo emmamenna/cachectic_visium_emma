@@ -77,7 +77,7 @@ library(openxlsx)
 ```
 
 
-#CORREZIONE EFFETTO DI BATCH
+#CORREZIONE EFFETTO DI BATCH (non cambia nulla e non c'era bisogno)
 ```{r}
 
 #NB: sarebbe anche da riprovare a filtrare i geni

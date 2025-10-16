@@ -1,0 +1,162 @@
+---
+title: "kontextual"
+output: html_document
+date: "2025-10-14"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#LINK VIGNETTA https://www.bioconductor.org/packages/devel/bioc/vignettes/Statial/inst/doc/Statial.html
+```{r}
+library(Statial)
+library(spicyR)
+library(ClassifyR)
+library(lisaClust)
+library(dplyr)
+library(SingleCellExperiment)
+library(ggplot2)
+library(ggsurvfit)
+library(survival)
+library(tibble)
+library(treekoR)
+```
+
+Perché usare Kontextual nel tuo caso
+Se i due tipi cellulari appartengono allo stesso contesto (es. entrambe cellule immunitarie nel microambiente tumorale, o due sottotipi nello stroma), allora:
+Il contesto stesso ha una sua intensità spaziale: in alcune zone è denso, in altre rado.
+Questa variazione può confondere la co-localizzazione osservata con un effetto puramente dovuto alla densità locale (cioè più cellule solo perché il contesto è denso lì).
+Kontextual “normalizza” per questa densità del contesto, pesando le distanze in modo da tenere conto della concentrazione del microambiente.
+
+#1. First, they can be defined based on our biological understanding of the cell types. We can represent this by #creating a named list containing the names of each parent and the associated vector of child cell types.
+#Ho pensato che non ha molto senso x l'interpretazione fare l'alternativa: clustering gerarchico a partire dai dati.
+
+#PROVO CON UN CAMPIONE INTANTO
+```{r}
+
+load("~/subset_list_filtered.RData") #NB: usa solo le coordinate, non importa la normalizzazione
+#prendo i mionuclei come contesto di riferimento (rientrano anche i MuSC?)
+
+?Kontextual
+spe <- subset_list$c26_b2
+kont_res <- Kontextual(
+  cells = spe,
+  r = 100,
+  from = "Myonuclei_Trim63",
+  to = "Myonuclei_IIb",
+  parent = c("Myonuclei_MTJ", "Myonuclei_Trim63","Myonuclei_IIb","Myonuclei_IIx_IIb","Myonuclei_IIx",
+                  "Myonuclei_NMJ","Myonuclei_IIx_IIa"),
+  cellType = "cell_type",
+  inhom = TRUE,
+  spatialCoords = c("pxl_col_in_fullres", "pxl_row_in_fullres"),
+  imageID = "sample_id"
+)
+
+#ATTENZIONE: I VALORI RIPORTATI SONO sqrt(L(r)/pi) - r!
+#QUINDI CONTA LO ZERO COME REFERENCE
+kont_res #questo è leggermente negativo ma poi
+
+#plot curve
+curves <- kontextCurve(
+  cells = spe,
+  from = "Myonuclei_Trim63",
+  to = "Myonuclei_IIb",
+  parent = c("Myonuclei_MTJ", "Myonuclei_Trim63","Myonuclei_IIb","Myonuclei_IIx_IIb","Myonuclei_IIx",
+                  "Myonuclei_NMJ","Myonuclei_IIx_IIa"),
+  rs = seq(50, 500, 50),
+  cellType = "cell_type",
+  spatialCoords = c("pxl_col_in_fullres", "pxl_row_in_fullres"),
+  imageID = "sample_id",
+  inhom = TRUE
+)
+#il raggio è nella stessa unità delle coordinate perché è una soglia
+#posta sulla distanza euclidea degli spot (che hanno le coordinate in pixel)
+#quindi è in pixel 
+
+curves #valori positivi da un certo punto in poi
+kontextPlot(curves)
+#cambia tanto considerare il contesto (per questo campione)
+#NB: senza l'inomogeneità anche l'azzurra viene positiva
+
+#"no spatial association = centered in 0 with small variance" dall'articolo
+
+```
+
+
+#Spatial relationship between trim and 2b myo
+#questo in realtà bisognerebbe vederlo sulla segmentazione
+```{r}
+
+default_color <- "white"
+
+your_color_vector <- setNames(
+  rep(default_color, 16),
+  c("Endothelial", "FAPs", "Immune_Cells", "MuSC", "Myonuclei_IIx",
+    "Myonuclei_IIx_IIa", "Myonuclei_IIx_IIb", "Myonuclei_MTJ",
+    "Myonuclei_NMJ", "Nervous_System", "Pericyte",
+    "Smooth_Muscular", "Tenocyte",
+    "Myonuclei_IIb", "Myonuclei_Trim63")
+)
+
+your_color_vector["Myonuclei_IIb"]     <- "green"
+your_color_vector["Myonuclei_Trim63"]  <- "black"
+your_color_vector[c("Myonuclei_IIx", "Myonuclei_IIx_IIa", "Myonuclei_IIx_IIb",
+                    "Myonuclei_MTJ", "Myonuclei_NMJ")]  <- "grey"
+
+#POTREBBE AVERE UN SENSO!!!
+
+plot_list <- lapply(names(subset_list), function(nm) {
+  spe <- subset_list[[nm]]
+  
+  plotCoords(spe, annotate = "cell_type", point_size = 0.7) +
+    scale_color_manual(values = your_color_vector, na.value = default_color) +
+    #ggtitle(nm) +   # <- titolo con il nome del campione
+    theme(
+      legend.key.width  = unit(0.5, "lines"),
+      legend.key.height = unit(1, "lines"),
+      plot.title = element_text(hjust = 0.5)  # per centrare il titolo
+    )
+})
+
+plot_list
+
+
+```
+
+#TUTTI I CAMPIONI (TRANNE SHAM)
+```{r}
+
+#ATTENZIONE: I VALORI RIPORTATI SONO sqrt(L(r)/pi) - r!
+#QUINDI CONTA LO ZERO COME REFERENCE
+
+#faccio direttamente la curva (valore singolo può servire eventualmente per fare un test)
+load("~/subset_list_filtered.RData")
+subset_list <- subset_list[!names(subset_list) %in% c("sham_b1","sham_b6","sham_b3")]
+plot_list <- list()  # crea lista vuota per salvare i plot
+
+#NON VA PER QUASI NESSUN CAMPIONEì
+for (i in seq_along(c26_list)) {
+  spe_i <- subset_list[[i]]  # estrai il singolo sample
+  
+  curves <- kontextCurve(
+    cells = spe_i,
+    from = "Myonuclei_Trim63",
+    to = "Myonuclei_IIb",
+    parent = c("Myonuclei_MTJ", "Myonuclei_Trim63","Myonuclei_IIb","Myonuclei_IIx_IIb","Myonuclei_IIx",
+               "Myonuclei_NMJ","Myonuclei_IIx_IIa"),
+    rs = seq(50, 510, 50),
+    cellType = "cell_type",
+    spatialCoords = c("pxl_col_in_fullres", "pxl_row_in_fullres"),
+    imageID = "sample_id",
+    inhom = TRUE
+  )
+  
+  plot_list[[i]] <- kontextPlot(curves) +
+    ggtitle(names(subset_list)[i])  # titolo con il nome del campione
+}
+
+```
+
+
+

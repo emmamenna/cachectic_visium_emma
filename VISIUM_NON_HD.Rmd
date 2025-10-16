@@ -40,38 +40,178 @@ library(ggspavis)
 
 #Obiettivo: stessa analisi di deconvoluzione e confronto risultati
 
-#ACQUISIZIONE (codice "spatial_grezzi" in locale)
-```{r, include=FALSE}
-#prova intanto con un campione
+#Funzione per deconvoluzione con grafici
+```{r}
+run_my_rctd <- function(spe, sce_ref, out_prefix) {
+  set.seed(9237)
+  rownames(spe) <- rowData(spe)$symbol
+  rownames(spe) <- make.unique(rownames(spe))
+  
+  #preparazione dataset
+  rctd_data <- createRctd(
+    spatial_experiment = spe,
+    reference_experiment = sce_ref,
+    cell_type_col = "subclusters"
+  )
+  
+  #deconvoluzione
+  results <- runRctd(rctd_data, rctd_mode = "multi")
+  
+  # Estrazione pesi
+  ws <- assay(results, "weights")
+  ws <- data.frame(t(as.matrix(ws)))
+  colData(spe)[names(ws)] <- ws[colnames(spe), ] #salvo tutti i pesi in spe
+  
+  #Rappresentazione di tutti i tipi cellulari
+  p <- lapply(names(ws), \(.) 
+    plotCoords(spe, annotate = ., point_size = 0.1)
+  ) |>
+    wrap_plots(nrow = 3, ncol=5, guides = "collect") & 
+    theme(
+      legend.key.width = unit(0.5, "lines"),
+      legend.key.height = unit(1, "lines"),
+      strip.text = element_text(size = 5) 
+    ) & 
+    scale_color_gradientn(colors = rev(hcl.colors(9, "Rocket")))
+  ggsave(paste0(out_prefix, "_types.png"), p, width = 10, height = 8, dpi = 300)
+  
+  # Assegna cluster
+  ids <- names(ws)[apply(ws, 1, which.max)]
+  ids <- gsub("\\.([A-z])", " \\1", ids)
+  idx <- match(colnames(spe), rownames(ws))
+  spe$cell_type <- factor(ids[idx]) #salvo le annotazioni (peso di maggioranza)
+  print(table(spe$cell_type))
+  
+  #Visualizzazione annotazioni
+ your_color_vector <- c(
+    "Endothelial" = "#0072B2",       # blu vivo
+    "FAPs" = "#009E73",              # verde vivo
+    "Immune_Cells" = "#D55E00",      # arancione-rosso
+    "MuSC" = "#E69F00",              # arancione
+    "Myonuclei_IIb" = "#CC79A7",     # magenta
+    "Myonuclei_IIx" = "#56B4E9",     # azzurro chiaro
+    "Myonuclei_IIx_IIa" = "#F0E442", # giallo
+    "Myonuclei_IIx_IIb" = "#9B59B6", # viola chiaro
+    "Myonuclei_MTJ" = "#0099B4",     # turchese
+    "Myonuclei_NMJ" = "#DDAA33",     # senape
+    "Myonuclei_Trim63" = "#CC3311",  # rosso scuro
+    "Nervous_System" = "#44AA99",    # verde acqua
+    "Pericyte" = "#AA4499",          # viola/rosa
+    "Smooth_Muscular" = "#332288",   # blu-viola scuro
+    "Tenocyte" = "#A3E635"           # verde lime
+)
 
-dir <- paste0("/outs")
+  stat1 <- plotCoords(spe, annotate = "cell_type", point_size = 5) +
+    scale_color_manual(values = your_color_vector) +
+    theme(
+      legend.key.width = unit(0.5, "lines"),
+      legend.key.height = unit(1, "lines")
+    )
+  
+  ggsave(paste0(out_prefix, "_dec.png"), stat1, width = 10, height = 8, dpi = 300)
+  
+  assign("visium_list", replace(visium_list, out_prefix, spe), envir = .GlobalEnv)
+  invisible(spe)
+}
+```
 
-spe1 <- TENxVisium(
-  spacerangerOut = dir,
-  processing = "raw",
-  images = c("hires", "lowres"),
-  jsonFile = "scalefactors_json.json",
-  tissuePattern = "tissue_positions.parquet",
-  spatialCoordsNames = c("pxl_col_in_fullres", "pxl_row_in_fullres")
-) |> import()
+#lettura campioni e richiamo alla funzione sopra
+```{r}
 
-#sono già a posto i dati? cioé non è da tagliare il tessuto come nel nostro caso?
+sce_ref <- readRDS("~/multiome_sce.rds")
+load("~/visium_list.RData")
+names(visium_list) <- c("C26Ctrl_1","C26Ctrl_2","Sham_1","Sham_2","Sham_3","C26T16_1","C26T16_2",
+                        "C26T16_3","C26T17_1","C26T17_2","C26T17_3")
 
-# processa_blocco <- function(blocco_num, lista_contissue) {
-#   blocco_nome <- paste0("blocco", blocco_num)
-#   speHD <- Visium2HD(bin = "016", blocco = blocco_nome)
-#   
-#   #Filtro per in/out of tissue (da qupath) e distinguo i 3 campioni
-#   speHD$tissue_type <- lista_contissue[[blocco_nome]]$exp_condition
-#   speHD_g <- speHD[, lista_contissue[[blocco_nome]]$in_tissue == TRUE]
-#   
-#   assign(paste0("speHD", blocco_num, "_g"), speHD_g, envir = .GlobalEnv)
-# }
-# 
-# processa_blocco(6, lista_contissue)
-# 
-# save(speHD6_g,file="speHD6_g.RData")
+#FARE ANDARE 
+for (name in names(visium_list)) {
+    run_my_rctd(visium_list[[name]], sce_ref, name)
+}
+
+save(visium_list,file="visium_list.RData")
 
 ```
+
+Posso fare un confronto proporzioni (non spaziale)
+e sarebbe figo fare un confronto anche spaziale tipo guardare le proporzioni
+dentro lo spot di visium hd e la classificazione degli spot hd che ci stanno dentro
+ma non so bene come. Corrispondenza campioni???
+
+#Barplot per campione (quello aggregato direi che non ha senso)
+```{r}
+
+load("~/visium_list.RData")
+
+# Costruisci un data frame con tutte le proporzioni per ogni oggetto
+prop_df <- lapply(names(visium_list), function(name) {
+  spe <- visium_list[[name]]
+  tab <- table(spe$cell_type)
+  prop <- prop.table(tab)
+  data.frame(
+    sample = name,
+    cell_type = names(prop),
+    proportion = as.numeric(prop)
+  )
+}) |> bind_rows()
+
+your_color_vector <- c(
+    "Endothelial" = "#0072B2",       # blu vivo
+    "FAPs" = "#009E73",              # verde vivo
+    "Immune_Cells" = "#D55E00",      # arancione-rosso
+    "MuSC" = "#E69F00",              # arancione
+    "Myonuclei_IIb" = "#CC79A7",     # magenta
+    "Myonuclei_IIx" = "#56B4E9",     # azzurro chiaro
+    "Myonuclei_IIx_IIa" = "#F0E442", # giallo
+    "Myonuclei_IIx_IIb" = "#9B59B6", # viola chiaro
+    "Myonuclei_MTJ" = "#0099B4",     # turchese
+    "Myonuclei_NMJ" = "#DDAA33",     # senape
+    "Myonuclei_Trim63" = "#CC3311",  # rosso scuro
+    "Nervous_System" = "#44AA99",    # verde acqua
+    "Pericyte" = "#AA4499",          # viola/rosa
+    "Smooth_Muscular" = "#332288",   # blu-viola scuro
+    "Tenocyte" = "#A3E635"           # verde lime
+)
+
+ggplot(prop_df, aes(x = sample, y = proportion, fill = cell_type)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = your_color_vector) +
+  theme_minimal() +
+  labs(
+    title = "Proporzioni dei tipi cellulari per campione",
+    x = "Campione (visium_list)",
+    y = "Proporzione",
+    fill = "Tipo Cellulare"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggsave("prop_nonhd.png", width = 10, height = 6, dpi = 300)
+
+```
+
+#Tabelle proporzioni 
+```{r}
+#per campione
+celltype_table <- lapply(names(visium_list), function(sample_name) {
+  spe <- visium_list[[sample_name]]
+  df <- as.data.frame(colData(spe))
+  df <- df %>%
+    group_by(cell_type) %>%
+    summarise(count = n()) %>%
+    mutate(proportion = count / sum(count),
+           sample = sample_name)
+  df
+}) %>%
+  bind_rows()
+
+celltype_matrix <- celltype_table %>%
+  select(sample, cell_type, proportion) %>%
+  pivot_wider(names_from = cell_type, values_from = proportion, values_fill = 0)
+
+celltype_matrix
+library(writexl)
+write_xlsx(celltype_matrix, "prop_nonhd.xlsx")
+
+```
+
 
 
