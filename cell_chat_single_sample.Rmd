@@ -42,70 +42,60 @@ library(SeuratDisk)
 library(SpaNorm)
 ```
 
-CellChat ha creato un'estensione (Jin et al., 2023) per la trascrittomica spaziale. Tanti altri metodi sono in Python, qualcuno in R (vedi articoli).
-Prendo un po' il codice dal multiome.
-
-#Normalizzazione e filtraggio (OGGETTO SALVATO, NON RIPETERE)
+#Dataset preparation:
+Firstly, genes are filtered in order to keep only genes expressed in at least 1% of the spots 
+(the threshold is so low because of the huge amount of genes that have poor detection in the samples, so being conservative seems like the best option).
+Secondly, spots that have zero counts or that were identified by deconvolution as NAs (excpet for block 7 -
+which we are not considering anymore in the analysis - these correspond to external connective tissue)
+are removed. 
+Lastly, a normalization accounting for spatial information (spaNorm) is applied.
 ```{r}
 load("~/subset_list.RData")
 
-#filter genes (expressed in at least 1% of spots)
+#removing block 7
+subset_list <- subset_list[!names(subset_list) %in% c("c26STAT3_b7","sham_b7","c26_b7")]
+cellchat_list <- list()
+
+#spots filtering
+subset_list <- lapply(subset_list, function(spe) {
+   keep <- !is.na(spe$cell_type) & colSums(counts(spe)) > 0
+   spe[,keep]
+})
+
+#genes filtering
  subset_list <- lapply(subset_list, function(spe) {
    keep <- filterGenes(spe, prop = 0.01)
    print(table(keep)) 
    spe[keep, ]
 })
+ 
+save(subset_list, file = "subset_list_filtered.RData")
 
-#Filtro gli NA della deconvoluzione e gli spot con conteggi nulli
-#(tanto tranne il blocco 7 sono solo esterni, ossia effettivo rumore - tessuto connettivo)
-subset_list <- lapply(subset_list, function(spe) {
-   keep <- !is.na(spe$cell_type) & colSums(counts(spe)) > 0
-   print(table(keep)) #vedo quanto sto togliendo (molta variabilità: da poche decine a poche migliaia)
-   spe[,keep]
-})
-
-#Normalizzazione single-cell 
-# subset_list <- lapply(subset_list, function(spe) {
-#   set.seed(92)
-#   spe <- logNormCounts(spe)
-# })
-
-#Normalizzazione spaziale 
-# ?SpaNorm
+#Spatial normalization
 subset_list <- lapply(subset_list, function(spe) {
   set.seed(92)
   spe <- SpaNorm(spe, sample.p = 0.10, maxn.psi = 200, maxit.nb=15, maxit.psi = 5, df.tps = 3)
 })
-#senza filtraggio dei geni è eterna
 
-#NB: SALVATO SUBSET_LIST FILTRATA E FILTRATA + SPANORM
+save(subset_list, file="~/subset_list_spanorm.RData")
 
 ```
 
-#CELL CHAT SU UN CAMPIONE ALLA VOLTA
-CellChat identifica ligandi e recettori sovra-espressi per ogni tipo di cellule
-(identifyOverExpressedGenes) e le interazioni ligando/recettore sovra-espresse 
-(identifyOverExpressedInteractions). Dopodiché associa a quelle interazioni una
-probabilità basata sull'espressione media del ligando e del recettore (di 2 tipi cellulari)
-e su una tecnica di network propagation (propaga l'info ai geni simili / nodi vicini).
-Le interazioni significative vengono identificate con un test di permutazione sulle 
-etichette dei gruppi cellulari. La stessa cosa viene fatta aggregando ligandi e recettori
-per pathway. Una rete di comunicazioni intercellulari è un grafo diretto pesato che mostra
-le connessioni significative tra gruppi cellulari. Poi ci sono vari modi in cui si può
-studiare la similarità dei vari signaling pathways (rappresentati come ognuno come una rete).
-```{r}
+#Cell chat separately per sample.
+CellChat identifies over-expressed ligands and receptors for each cell type as well as over-expressed ligand-receptor interactions. After that, it associates a probability to these interactions,
+which is based on the mean expressions of the ligand and receptor (in their cell types).
+Significant interactions are identified according to a permutation test on cell type labels.
+Then probabilities refering to ligand-receptor couples belonging to the same biological pathway are merged to detect the strength of the pathway in the tissue and which cell types it involves.
 
-#funziona col filtraggio dei geni all'1% e la normalizzazione single-cell
+The new version of cell chat allows the use of spatial information: the probability of an interaction
+is inversely proportional to their distance. In addition, it allows to look for contact dependent interactions.
+```{r}
 load("~/subset_list_spanorm.RData")
 
-#tolgo il blocco7
-subset_list <- subset_list[!names(subset_list) %in% c("c26STAT3_b7","sham_b7","c26_b7")]
-cellchat_list <- list()
-
-#aggiungo i dati spatial
+#spatial information
 spatial.factors <- data.frame(
-  ratio = 0.315,   #conversione micron pixel
-  tol   = 4    # metà della dimensione del bin
+  ratio = 0.316,   # pixel -> micron conversion factor
+  tol   = 4    # half the dimension of bins in micron
 )
 
 cellchat_list <- lapply(subset_list, function(spx) {
@@ -114,99 +104,44 @@ cellchat_list <- lapply(subset_list, function(spx) {
                          datatype = "spatial",
                          group.by = "cell_type",
                          coordinates = spatialCoords(spx),
+                         assay ="logcounts",
                          spatial.factors = spatial.factors)
   chat@DB <- CellChatDB.mouse
   # chat@DB.use <-subsetDB(chat@DB,search="Secreted Signaling")
-
   chat <- subsetData(chat)
   chat <- identifyOverExpressedGenes(chat)
   chat <- identifyOverExpressedInteractions(chat)
-  chat <- computeCommunProb(chat, type = "triMean", scale.distance = 0.1, contact.dependent = FALSE)
+  chat <- computeCommunProb(chat, type = "triMean", 
+                            distance.use = TRUE,
+                            scale.distance = 0.1,
+                            k.min = 10, #min. interacting cell pairs for 2 groups to be defined close (default)
+                            contact.dependent = TRUE,
+                            contact.range = 30)
   chat <- computeCommunProbPathway(chat)
   chat <- aggregateNet(chat)
   chat
 })
 
-#CONTACT DEPENDENT TRUE O FALSE? INTANTO METTO FALSE
-#mi dice di alzare scale.distance
-
-lapply(cellchat_list, function(x){
-  df.net <- subsetCommunication(x, slot.name = "netP")
-  prob <- df.net %>% group_by(pathway_name) %>% summarise(sum = sum(prob))
-  prob <- prob[order(prob$sum, decreasing = T), ]
-}) 
-
-```
-
-#COMBINAZIONE RISULTATI (lascia stare)
-```{r}
-
-chat@net$prob #una matrice per ogni interazione LR
-chat@net$pval #e p-value associati -> le probabilità si azzerano quando il pval non è sig.
-dim(chat@net$prob) #sono 2083 in questo caso
-chat@net$weight
-
-#c'è una funzione che permette di mettere assieme gli oggetti cellchat di ogni campione
-#ma mantiene comunque le cose separate.
-cell_chat_sham_list <- cellchat_list[names(cellchat_list) %in% c("sham_b1","sham_b3","sham_b6")]
-cell_chat_sham <- mergeCellChat(cell_chat_sham_list,
-                                add.names = names(cell_chat_sham_list),
-                                cell.prefix = TRUE)
-
-cell_chat_sham@net #ci sono le 3 reti per i 3 campioni
-
-#secondo il prof sarebbe da fare un merge a livello di probabilità
-#prima che venga assegnata una significatività
-#ma come? bisognerebbe andare a modificare la funzione di computeCommunProb
-
-ci_sham <- compareInteractions(cell_chat_sham) #vuole l'oggetto merged
-ci_sham@plot_env #boh ci sono un po' di confronti ma aggregati... non credo siano utili
-rankNet()
-
-#GUARDARE VIGNETTE
-
-
-```
-
-
-#SENZA INFO SPAZIALE X CONFRONTO
-```{r}
-
-#funziona col filtraggio dei geni all'1% e la normalizzazione single-cell
-load("~/subset_list_spanorm.RData")
-
-#tolgo il blocco7
-subset_list <- subset_list[!names(subset_list) %in% c("c26STAT3_b7","sham_b7","c26_b7")]
-cellchat_list <- list()
-
-cellchat_list <- lapply(subset_list, function(spx) {
-  sce <- as(spx, "SingleCellExperiment")
-  chat <- createCellChat(object = sce,
-                         group.by = "cell_type"
-                         )
-  chat@DB <- CellChatDB.mouse
-  # chat@DB.use <-subsetDB(chat@DB,search="Secreted Signaling")
-
-  chat <- subsetData(chat)
-  chat <- identifyOverExpressedGenes(chat)
-  chat <- identifyOverExpressedInteractions(chat)
-  chat <- computeCommunProb(chat, type = "triMean")
-  chat <- filterCommunication(chat, min.cells = 5)
-  chat <- computeCommunProbPathway(chat)
-  chat <- aggregateNet(chat)
-  chat
+results <- lapply(cellchat_list, function(x){
+  tryCatch({
+    df.net <- subsetCommunication(x, slot.name = "netP")
+    prob <- df.net %>%
+      group_by(pathway_name) %>%
+      summarise(sum = sum(prob))
+    prob[order(prob$sum, decreasing = TRUE), ]
+  }, error = function(e) {
+    message("Skipping one CellChat object: ", e$message)
+    return(NULL)
+  })
 })
-
-lapply(cellchat_list, function(x){
-  df.net <- subsetCommunication(x, slot.name = "netP")
-  prob <- df.net %>% group_by(pathway_name) %>% summarise(sum = sum(prob))
-  prob <- prob[order(prob$sum, decreasing = T), ]
-}) 
+results
 
 ```
 
-#VISUALIZZAZIONE COMPLETA
+#Visualization -> plots are saved in a pdf file for each sample
 ```{r}
+subset_list <- subset_list[!names(subset_list) =="sham_b6"]
+
 # Loop sui campioni
 invisible(lapply(names(cellchat_list), function(sample_name) {
   chat <- cellchat_list[[sample_name]]

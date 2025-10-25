@@ -123,7 +123,6 @@ load("~/visium_list.RData")
 names(visium_list) <- c("C26Ctrl_1","C26Ctrl_2","Sham_1","Sham_2","Sham_3","C26T16_1","C26T16_2",
                         "C26T16_3","C26T17_1","C26T17_2","C26T17_3")
 
-#FARE ANDARE 
 for (name in names(visium_list)) {
     run_my_rctd(visium_list[[name]], sce_ref, name)
 }

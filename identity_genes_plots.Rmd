@@ -150,6 +150,112 @@ ggsave("DotPlot_Myonuclei.png", plot = p2, width = 6, height = 5, dpi = 300)
 
 ```
 
+#SOLO C26 E SHAM
+```{r}
+#da grafico 1k articolo Camilla
+pb_wb7 <- readRDS("~/pb_wb7.rds")
+pb_wb7 <- pb_wb7[,pb_wb7$tissue_type %in% c("c26","sham")]
+
+# CORREGGO EFFETTO DI BATCH ------------------------------------------------------------------------
+library(sva)
+expr <- assay(pb_wb7, "logcounts") 
+colData(pb_wb7)$block <- gsub(".*_", "", colData(pb_wb7)$sample_id)
+#table(pb_wb7$block)
+batch <- colData(pb_wb7)$block
+
+expr_combat <- ComBat(
+  dat = as.matrix(expr),  # matrice numerica
+  batch = batch,
+  par.prior = TRUE,
+  prior.plots = FALSE
+)
+
+#1. aggrega i mionuclei ------------------------------------------------------------
+colData(pb_wb7)$clusters <- ifelse(
+  grepl("^Myonuclei", colData(pb_wb7)$cell_type),
+  "Myonuclei",
+  as.character(colData(pb_wb7)$cell_type)
+)
+colData(pb_wb7)$clusters <- factor(colData(pb_wb7)$clusters)
+
+sub_geni <- c("Ttn","Pdgfra","Dcn","Myh11","Trpc3","Cacna1c","Col11a1","Mkx","Col1a1","Ptprc",
+              "F13a1","Itgam","Pax7","Kcna1","Matn2","Mbp","Mpz","Prx","Cadm1","Reln","Mmrn1",
+              "Pecam1","Kdr")
+
+df <- as.data.frame(t(expr_combat[sub_geni, , drop=FALSE])) 
+df$celltype <- colData(pb_wb7)$clusters  
+df_long <- pivot_longer(df, cols = all_of(sub_geni),
+                        names_to = "gene", values_to = "expr")
+
+# calcolo media e percentuale per ogni celltype × gene
+dot_data <- df_long %>%
+  group_by(celltype, gene) %>%
+  summarise(
+    pct_expr_combat = sum(expr > 0) / n() * 100,
+    avg_expr_combat = mean(expr[expr > 0], na.rm = TRUE),
+    .groups = "drop"
+  )
+
+p1 <- ggplot(dot_data, aes(x = gene, y = celltype)) +
+  geom_point(aes(size = pct_expr_combat, color = avg_expr_combat)) +
+  scale_color_gradient(low = "grey", high = "red") +
+  theme_bw() +
+  labs(
+    x = "Gene",
+    y = "Cell type",
+    color = "Average expression",
+    size = "% expressing"
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.text.y = element_text(size = 10),
+    panel.grid.major = element_line(color = "grey90")
+  )
+ggsave("DotPlot_completo.png", plot = p1, width = 8, height = 6, dpi = 300)
+#comunque sono i BIN, per questo sarà molto sporco anche se corretto x batch
+
+#2. solo mionuclei -------------------------------------------------------------------------------
+genes_mio <- c("Ttn","Myh4","Myh1","Myh2","Col22a1","Ache","Etv5")
+cells_sel <- pb_wb7$cell_type %in% c("Myonuclei_IIb","Myonuclei_IIx","Myonuclei_IIx_IIa",
+                                     "Myonuclei_IIx_IIb","Myonuclei_MTJ","Myonuclei_NMJ",
+                                     "Myonuclei_Trim63")
+
+expr_mio <- expr_combat[, cells_sel]
+df <- as.data.frame(t(expr_mio))
+df$sample   <- colData(pb_wb7)[cells_sel,]$sample
+df$celltype <- colData(pb_wb7)[cells_sel,]$cell_type
+
+df_long <- pivot_longer(df, cols = all_of(genes_mio),
+                        names_to = "gene", values_to = "expr")
+
+dot_data <- df_long %>%
+  group_by(celltype, gene) %>%
+  summarise(
+    pct_expr_combat = sum(expr > 0) / n() * 100,
+    avg_expr_combat = mean(expr[expr > 0], na.rm = TRUE),
+    .groups = "drop"
+  )
+
+p2 <- ggplot(dot_data, aes(x = gene, y = celltype)) +
+  geom_point(aes(size = pct_expr_combat, color = avg_expr_combat)) +
+  scale_color_gradient(low = "grey", high = "red") +
+  theme_bw() +
+  labs(
+    x = "Gene",
+    y = "Cell type",
+    color = "Average expression",
+    size = "%expressing"
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.text.y = element_text(size = 10),
+    panel.grid.major = element_line(color = "grey90")
+  )
+ggsave("DotPlot_Myonuclei.png", plot = p2, width = 6, height = 5, dpi = 300)
+
+```
+
+
 #Visualizzazione nel tessuto con scale separate (no confronto)
 ```{r}
 load("subset_list.RData")

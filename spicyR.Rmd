@@ -173,8 +173,7 @@ inhomLPair_mod <- function (
     maxR <- min(ow$xrange[2] - ow$xrange[1], ow$yrange[2] - ow$yrange[1]) / 2.01
     Rs <- unique(pmin(c(0, sort(Rs)), maxR))
 
-    # --- Calcolo densità se sigma è 
-    definito ---
+    # --- Calcolo densità se sigma è definito ---
     if (!is.null(sigma)) {
         den <- spatstat.explore::density.ppp(X, sigma = sigma)
         den <- den / mean(den)
@@ -360,8 +359,6 @@ for (sample in names(all_Lcurves)) {
   Lcurve <- all_Lcurves[[sample]]
   p <- ggplot(Lcurve, aes(x = r, y = wt)) +
     geom_line(size = 1) +
-    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
-    geom_hline(yintercept = 1, linetype = "dashed", color = "gray50") +
     theme_minimal(base_size = 14) +
     labs(
       title = paste("Curva L(r) - Campione:", sample),

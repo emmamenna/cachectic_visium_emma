@@ -29,10 +29,9 @@ library(tidyverse)
 library(SpotSweeper)
 ```
 
-# Analisi Esplorativa - bin da 16 micron
-
-Analisi pseudo bulk dei dati a risoluzione 16 micron.
-
+#Function to read data from Visium HD
+A bin size of preference needs to be selected between 002, 008 and 016, and the
+correspondent list defining bins in and out of tissue has to be loaded.
 ```{r, include=FALSE}
 
 Visium2HD <- function(bin = "008", blocco_num = "blocco1", directory =  "/mnt/europa/data/sandri/241219_A00626_0902_AHWH77DMXY_3/space_out/")
@@ -57,73 +56,58 @@ load("~/liste_tissue_cond_008.RData")
 
 ```
 
-#FILTRAGGIO
+Filtering data to only keep in-tissue bins and separating the 3 samples in the same block.
 ```{r}
 
 #Filtrare anche i geni già in questa fase?
 
 processa_blocco <- function(blocco_num, lista_contissue) {
   blocco_nome <- paste0("blocco", blocco_num)
-  speHD <- Visium2HD(bin = "008", blocco = blocco_nome) #HO MESSO 16BIN 
+  speHD <- Visium2HD(bin = "008", blocco = blocco_nome) 
   
-  #Filtro per in/out of tissue (da qupath) e distinguo i 3 campioni
   speHD$tissue_type <- lista_contissue[[blocco_nome]]$exp_condition
   speHD_f <- speHD[, lista_contissue[[blocco_nome]]$in_tissue == TRUE]
   rm(speHD)
   
-  #Creo due colonne per portarmi dietro le informazioni sul numero
-  #totale di conteggi e di geni rilevati per ogni spot.
+  #Saving info on UMIs and genes per spot
   colData(speHD_f)$ncounts <- colSums(assay(speHD_f))
   colData(speHD_f)$ngenes <- Matrix::colSums(assay(speHD_f) > 0)
   
-  # Scatterplot
+  #Scatterplot
   plot(colData(speHD_f)$ncounts, colData(speHD_f)$ngenes,
        main = paste("Blocco", blocco_num),
        xlab = "ncounts", ylab = "ngenes")
-  #fare la stessa cosa anche con le info sui pixel
   
-  # Filtro su base UMI e geni
-  speHD_f <- speHD_f[, colData(speHD_f)$ncounts >= quantile(colData(speHD_f)$ncounts, 0.05) &
-                       colData(speHD_f)$ngenes >= quantile(colData(speHD_f)$ngenes, 0.05)]
+  # Optional filtering based on UMIs and genes 
+  # speHD_f <- speHD_f[, colData(speHD_f)$ncounts >= quantile(colData(speHD_f)$ncounts, 0.05) &
+  #                      colData(speHD_f)$ngenes >= quantile(colData(speHD_f)$ngenes, 0.05)]
   
   assign(paste0("speHD", blocco_num, "_f"), speHD_f, envir = .GlobalEnv)
 }
 
-processa_blocco(1,lista_contissue)
+#Data without filtering has been saved as speHD_g objects.
 
-# for (b in c(1:7, 9)) {
-#   processa_blocco(b, lista_contissue)
-# }
-# 
-# dim(speHD1_f)
-# dim(speHD2_f)
-# dim(speHD3_f)
-# dim(speHD4_f)
-# dim(speHD5_f)
-# dim(speHD6_f)
-# dim(speHD7_f)
-# dim(speHD9_f)
+for (b in c(1:7, 9)) {
+  processa_blocco(b, lista_contissue)
+}
 ```
 
-#Controllo geni mitocondriali e ribosomiali (non ce ne sono)
+#Check mithocondrial and ribosomal genes.
 ```{r}
 rownames(speHD2_f) <- rowData(speHD2_f)$Symbol
 mt <- grepl("^Mt-", rownames(speHD2_f))
 rpl <- grepl("^Rpl-", rownames(speHD2_f))
 rps <- grepl("^Rps-", rownames(speHD2_f))
-#(stessi geni x tutti)
 ```
 
-# Grafici dei muscoli per ogni blocco
+#Recalling a code for plotting all blocks.
 ```{r child = "Plot_muscoli.Rmd"}
 ```
 
 
-# Analisi Pseudo Bulk
-
-Aggregazione blocchi: creiamo un unico oggetto single-cell in cui si possono distinguere
-i vari campioni, grazie alle variabili che identificano il blocco e il tipo di campione.
-
+#Pseudo-bulk exploratory analysis
+Aggregating blocks: let's first create a single-cell object merging all samples,
+defining variables to identify tissue_type (condition: c26, sham etc.) and block.
 ```{r}
 
 tissue_type <- c(
@@ -136,7 +120,6 @@ tissue_type <- c(
   speHD7_f$tissue_type,
   speHD9_f$tissue_type
 )
-#table(tissue_type)
 
 blocco_id <- c(rep(1,dim(speHD1_f)[2]),
                rep(2,dim(speHD2_f)[2]),
@@ -159,42 +142,28 @@ conteggi <- cbind(counts(speHD1_f),
                   counts(speHD9_f)
 )
 
-# dim(conteggi)
-# length(blocco_id)
-# length(tissue_type)
-
-#OGGETTO SINGLE CELL
+#Single-cell object
 coldata <- DataFrame(sampletype=tissue_type, blocco = blocco_id)
 
 sce <- SingleCellExperiment(
   assays = list(counts = conteggi),
   colData = coldata
 )
-sce
-colData(sce)
 
 sce$sample <- paste0(sce$sampletype,"_",sce$blocco)
-
-# Genes filtering: keep the genes that have an expression average greater
-# than zero in at least of 10% for each (sample?).
-# keep <- apply(counts(sce), 1, function(y) all(tapply(y, sce$sample, function(x) mean(x > 0)) >= 0.1))
-# fil_sce <- sce[keep, ]
+#let's add a variable to identify samples (combination of block and tissue_type)
 
 ```
 
-
-
-Creiamo un oggetto pseudobulk a partire dall'oggetto single-cell.
-
+Then, let's create a pseudo-bulk object merging (sum) all counts from the same sample.
 ```{r}
 pb <- aggregateAcrossCells(sce, ids=DataFrame(tissue = sce$sampletype,
                                               blocco = sce$blocco))
-pb
 rownames(pb) <- rowData(speHD1_f)$Symbol
 
 ```
 
-#Normalizziamo i dati con una TMM
+#TMM normalization
 ```{r, message=FALSE, warning=FALSE}
 raw_counts <- assay(pb, "counts") 
 dge <- DGEList(counts = raw_counts)
@@ -208,34 +177,31 @@ logcounts(pb) <- log_cpm
 
 ```
 
-## PCA e altri metodi di riduzione della dimensionalità
-
-```{r, include=FALSE}
 #PCA
+Let's observe how samples divide: there seems to be an aggregation dependent on conditions
+more than bathc effect (good).
+```{r, include=FALSE}
 pb <- runPCA(pb, BSPARAM = BiocSingular::ExactParam(), ncomponents=2)
 plotPCA(pb, color_by = "sampletype", point_size=8)
 plotPCA(pb, color_by = "blocco", point_size=8)
 
 ```
 
-```{r, include=FALSE}
 #TSNE
+```{r, include=FALSE}
 pb <- runTSNE(pb, dimred = "PCA", perplexity = 2)
 plotTSNE(pb, color_by = "sampletype", point_size = 8)
 
 ```
 
-```{r, include=FALSE}
 #UMAP
+```{r, include=FALSE}
 pb <- runUMAP(pb, dimred = "PCA", n_neighbors = 3)
 plotUMAP(pb, color_by = "sampletype", point_size = 8)
 
 ```
 
-Guardiamo la decomposizione della varianza dei geni, poi mantenendo solo i 5000
-geni più variabili guardiamo PCA, T-SNE e UMAP per avere un'indicazione di come
-si dispongono i campioni in uno spazio ridotto e osservare eventuali aggregazioni
-basate sul tipo di campione e sul blocco.
+Repeating the same analysis while selecting only the 5000 most variable genes (around 15% of all genes).
 ```{r, message=FALSE, warning=FALSE}
 
 dec.pb <- modelGeneVar(pb, assay.type = "logcounts")
@@ -262,23 +228,21 @@ summary_table <- tibble::tibble(
 
 print(summary_table)
 
-#Prendiamo 5000 geni (circa il 15%)
 top5000_genes <- getTopHVGs(dec.pb, n = 5000)
 pb_vg <- pb[top5000_genes, ]
 
-#PCA SUI GENI + VARIABILI
 pb_vg <- runPCA(pb_vg, BSPARAM = BiocSingular::ExactParam(), ncomponents=2)
 plotPCA(pb_vg, color_by = "sampletype", point_size=6)
 
 pb_vg <- runPCA(pb_vg, BSPARAM = BiocSingular::ExactParam(), ncomponents=2)
 plotPCA(pb_vg, color_by = "blocco", point_size=6)
 
-#Varianza spiegata CP
+#Principal components explained variance
 pca <- prcomp(t(log_cpm), scale. = TRUE)
 var_explained <- (pca$sdev)^2 / sum((pca$sdev)^2)
 percent_var <- round(100 * var_explained, 1)
 
-#SCREE PLOT COMPONENTI PRINCIPALI
+#SCREE PLOT of principal components
 elbow_df <- data.frame(PC = paste0("PC", 1:length(var_explained)),
                        VarianceExplained = var_explained)
 
@@ -286,17 +250,15 @@ ggplot(elbow_df[1:12, ], aes(x = seq_along(VarianceExplained), y = VarianceExpla
   geom_point() + geom_line() + theme_minimal() +
   labs(title = "Elbow Plot", x = "Principal Component", y = "Proportion of Variance Explained")
 
-#UMAP CON GENI + VARIABILI
 pb_vg <- runUMAP(pb_vg, dimred = "PCA", n_neighbors = 3)
 plotUMAP(pb_vg, color_by = "sampletype", point_size = 8)
 
-#TSNE CON GENI + VARIABILI
 pb_vg <- runTSNE(pb_vg, dimred = "PCA", perplexity = 2)
 plotTSNE(pb_vg, color_by = "sampletype", point_size = 8)
 
 ```
 
-### Boxplot dei logcounts
+#Logcounts boxplot
 ```{r}
 df_long <- as.data.frame(log_cpm) |>
   pivot_longer(
@@ -311,21 +273,7 @@ ggplot(df_long, aes(x = sample, y = expression)) +
   theme(axis.text.x = element_text(angle = 90, hjust = 1)) +  # las=2
   labs(x = "Sample", y = "Log expression")
 
-#counts
-# df_long <- as.data.frame(counts(pb)) |>
-#   pivot_longer(
-#     cols = everything(),
-#     names_to = "sample",
-#     values_to = "expression"
-#   )
-# 
-# ggplot(df_long, aes(x = sample, y = expression)) +
-#   geom_boxplot(outlier.shape = NA) +  # outline=FALSE
-#   theme_minimal() +
-#   theme(axis.text.x = element_text(angle = 90, hjust = 1)) +  # las=2
-#   labs(x = "Sample", y = "Log expression")
-
-#PER TIPO DI CAMPIONE
+#divided by condition
 df_long$sampletype <- colData(pb)$sampletype[match(df_long$sample, colnames(pb))]
 
 df_long$sample <- factor(df_long$sample, levels = df_long %>%
@@ -339,7 +287,7 @@ ggplot(df_long, aes(x = sample, y = expression, fill = sampletype)) +
   theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
   labs(x = "Sample", y = "Log expression", fill = "Tipo campione")
 
-#PER BLOCCO
+#divided by block
 df_long$blocco <- colData(pb)$blocco[match(df_long$sample, colnames(pb))]
 
 df_long$sample <- factor(df_long$sample, levels = df_long %>%
@@ -355,7 +303,7 @@ ggplot(df_long, aes(x = sample, y = expression, fill = blocco)) +
 
 ```
 
-### Tabella valori riassuntivi per campione
+#Summary of samples information (UMIs, observed genes and number of spots)
 ```{r}
 estrai_info <- function(speHD, nome_campione) {
   tt <- unique(colData(speHD)$tissue_type)
@@ -386,7 +334,6 @@ df6 <- estrai_info(speHD6_f, "Blocco6")
 df7 <- estrai_info(speHD7_f, "Blocco7")
 df9 <- estrai_info(speHD9_f, "Blocco9")
 
-#Tabella
 tabella_finale <- rbind(df1, df2, df3, df4, df5, df6, df7, df9)
 tabella_finale <- tabella_finale[order(tabella_finale$Tissue_Type, tabella_finale$Campione), ]
 tabella_finale <- tabella_finale[, c("Tissue_Type", "Campione", "Numero_Spot", "Totale_UMI", "Geni_Detectati")]
@@ -394,7 +341,7 @@ print(tabella_finale)
 
 ```
 
-#GRAFICI RIFERITI ALLA TABELLA SOPRA
+#Graphs related to the summary table just found.
 ```{r}
 library(readxl)
 dati <- read_xlsx("tab_rias.xlsx")
@@ -426,7 +373,6 @@ ggsave("barplot_UMI_blocco.png", dpi = 300)
 
 library(tidyr)
 
-# Porta i dati in formato long
 dati |> 
   pivot_longer(cols = c(Numero_Spot, Geni_Detectati),
                names_to = "Variabile",
@@ -445,28 +391,23 @@ ggsave("barplot_Nspot_geni_campione.png")
 ```
 
 
-#Aalisi dei geni differenzialmente espressi
+#Differentially Expressed Genes analysis
 ```{r}
 
-#Oggetto DGEList
 y <- DGEList(counts(pb), samples = colData(pb))
-#filtraggio geni
-y <- y[rowSums(y$counts) > 0, ]
-#per filtrare un po' di più
+
+#filtering genes observed in less than 10% of spots
 min_samples <- ceiling(0.1 * ncol(y$counts))
 y <- y[rowSums(y$counts > 0) >= min_samples, ]
 
-#Normalizzazione TMM
+#TMM normalization
 y <- calcNormFactors(y)
 
-#Matrice del modello
 design <- model.matrix(~ sampletype, data = y$samples)
-
-#Stima dispersione e del modello
 y <- estimateDisp(y, design)
 fit <- glmFit(y, design)
 
-#Contrasti:
+#Defining contrasts of interest:
 contrast_list <- list(
     "C26_vs_SHAM" = makeContrasts(sampletypec26 - sampletypesham, levels = make.names(colnames(design))),
     "FOXO_vs_C26" = makeContrasts(-sampletypec26, levels = make.names(colnames(design))),
@@ -490,7 +431,7 @@ lrt8 <- glmLRT(fit, contrast = contrast_list$SMAD23_vs_C26)
 lrt9 <- glmLRT(fit, contrast = contrast_list$SMAD23_vs_SHAM)
 ```
 
-#VISUALIZZAZIONE E SALVATAGGIO RISULTATI
+#Observing and saving results
 ```{r}
 library(openxlsx)
 

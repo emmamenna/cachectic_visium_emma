@@ -36,32 +36,94 @@ library(VisiumIO)
 library(spacexr)
 library(SpotSweeper)
 library(ggspavis)
+library(writexl)
 ```
 
-#Funzione per deconvoluzione con grafici
+#Deconvolution function
+For each spot the probability for each cell type as well as the label of the principal cell type are saved.
 ```{r}
 run_my_rctd <- function(spe, sce_ref, out_prefix) {
   set.seed(9237)
   rownames(spe) <- rowData(spe)$Symbol
   rownames(spe) <- make.unique(rownames(spe))
   
-  #preparazione dataset
+  #data preparation
   rctd_data <- createRctd(
     spatial_experiment = spe,
     reference_experiment = sce_ref,
     cell_type_col = "subclusters"
   )
   
-  #deconvoluzione
+  #deconvolution
   results <- runRctd(rctd_data, rctd_mode = "multi")
   
-  # Estrazione pesi
+  #weights extraction
   ws <- assay(results, "weights")
   ws <- data.frame(t(as.matrix(ws)))
-  colData(spe)[names(ws)] <- ws[colnames(spe), ] #salvo tutti i pesi in spe
+  colData(spe)[names(ws)] <- ws[colnames(spe), ] 
   
-  #Rappresentazione di tutti i tipi cellulari
-  p <- lapply(names(ws), \(.) 
+  #Cluster labelling
+  ids <- names(ws)[apply(ws, 1, which.max)]
+  ids <- gsub("\\.([A-z])", " \\1", ids)
+  idx <- match(colnames(spe), rownames(ws))
+  spe$cell_type <- factor(ids[idx]) 
+  print(table(spe$cell_type))
+  
+  assign("subset_list", replace(subset_list, out_prefix, spe), envir = .GlobalEnv)
+  invisible(spe)
+}
+```
+
+Creating a list of spatial experiment objects (one for each sample) and applying the deconvolution
+to all samples separately.
+```{r}
+sce_ref <- readRDS("~/multiome_sce.rds") #reference dataset from multiome
+
+# loading visium HD objects from "analisi esplorative" (one for each block)
+for (i in c(1,2,3,4,5,6,7,9)) {
+    load(paste0("~/speHD", i, "_g.RData"))
+}
+
+spe_list <- list(
+    speHD1_g = speHD1_g,
+    speHD2_g = speHD2_g,
+    speHD3_g = speHD3_g,
+    speHD4_g = speHD4_g,
+    speHD5_g = speHD5_g,
+    speHD6_g = speHD6_g,
+    speHD7_g = speHD7_g,
+    speHD9_g = speHD9_g
+)
+
+subset_list <- list()
+
+#separating blocks into the 3 samples (using tissue_type) and then placing all spatial
+#experiment objects in a new list.
+for (spe_name in names(spe_list)) {
+    spe_obj <- spe_list[[spe_name]]
+    tissue_types <- unique(colData(spe_obj)$tissue_type)
+    for (tissue in tissue_types) {
+        subset_obj <- spe_obj[, colData(spe_obj)$tissue_type == tissue]
+        out_name <- paste0(tissue, "_", gsub("speHD", "b", gsub("_g", "", spe_name)))
+        subset_list[[out_name]] <- subset_obj
+    }
+}
+
+#calling deconvolution on each sample
+for (name in names(subset_list)) {
+    run_my_rctd(subset_list[[name]], sce_ref, name)
+}
+
+save(subset_list,file="subset_list.RData")
+
+```
+
+Plots to show deconvolution on tissue: for each sample 2 plots are created. In the first, for all cell types
+spots are coloured according to the probabiluty (weigth) for that cell type. In the second one, each
+spot is coloured according to its clustering labels (the cell type with highest weigth).
+```{r}
+
+p <- lapply(names(ws), \(.) 
     plotCoords(spe, annotate = ., point_size = 0.1)
   ) |>
     wrap_plots(nrow = 3, ncol=5, guides = "collect") & 
@@ -71,17 +133,10 @@ run_my_rctd <- function(spe, sce_ref, out_prefix) {
       strip.text = element_text(size = 5) 
     ) & 
     scale_color_gradientn(colors = rev(hcl.colors(9, "Rocket")))
-  ggsave(paste0(out_prefix, "_types.png"), p, width = 10, height = 8, dpi = 300)
   
-  # Assegna cluster
-  ids <- names(ws)[apply(ws, 1, which.max)]
-  ids <- gsub("\\.([A-z])", " \\1", ids)
-  idx <- match(colnames(spe), rownames(ws))
-  spe$cell_type <- factor(ids[idx]) #salvo le annotazioni (peso di maggioranza)
-  print(table(spe$cell_type))
+ggsave(paste0(out_prefix, "_types.png"), p, width = 10, height = 8, dpi = 300)
   
-  #Visualizzazione annotazioni
- your_color_vector <- c(
+your_color_vector <- c(
     "Endothelial" = "#0072B2",       # blu vivo
     "FAPs" = "#009E73",              # verde vivo
     "Immune_Cells" = "#D55E00",      # arancione-rosso
@@ -99,71 +154,22 @@ run_my_rctd <- function(spe, sce_ref, out_prefix) {
     "Tenocyte" = "#A3E635"           # verde lime
 )
 
-  stat1 <- plotCoords(spe, annotate = "cell_type", point_size = 0.5) +
+stat1 <- plotCoords(spe, annotate = "cell_type", point_size = 0.5) +
     scale_color_manual(values = your_color_vector) +
     theme(
       legend.key.width = unit(0.5, "lines"),
       legend.key.height = unit(1, "lines")
     )
   
-  ggsave(paste0(out_prefix, "_dec.png"), stat1, width = 10, height = 8, dpi = 300)
+ggsave(paste0(out_prefix, "_dec.png"), stat1, width = 10, height = 8, dpi = 300)
   
-  assign("subset_list", replace(subset_list, out_prefix, spe), envir = .GlobalEnv)
-  invisible(spe)
-}
 ```
 
-#lettura campioni e richiamo alla funzione sopra
-```{r}
-
-sce_ref <- readRDS("~/multiome_sce.rds")
-# Carica tutti i tuoi RData in modo iterativo
-# for (i in c(1,2,3,4,5,6,7,9)) {
-#     load(paste0("~/speHD", i, "_g.RData"))
-# }
-# 
-# spe_list <- list(
-#     speHD1_g = speHD1_g,
-#     speHD2_g = speHD2_g,
-#     speHD3_g = speHD3_g,
-#     speHD4_g = speHD4_g,
-#     speHD5_g = speHD5_g,
-#     speHD6_g = speHD6_g,
-#     speHD7_g = speHD7_g,
-#     speHD9_g = speHD9_g
-# )
-# 
-# subset_list <- list()
-# 
-# for (spe_name in names(spe_list)) {
-#     spe_obj <- spe_list[[spe_name]]
-#     tissue_types <- unique(colData(spe_obj)$tissue_type)
-#     for (tissue in tissue_types) {
-#         subset_obj <- spe_obj[, colData(spe_obj)$tissue_type == tissue]
-#         out_name <- paste0(tissue, "_", gsub("speHD", "b", gsub("_g", "", spe_name)))
-#         subset_list[[out_name]] <- subset_obj
-#     }
-# }
-
-# for (name in names(subset_list)) {
-#     run_my_rctd(subset_list[[name]], sce_ref, name)
-# }
-
-for (i in 15:length(subset_list)) {
-    name <- names(subset_list)[i]
-    run_my_rctd(subset_list[[name]], sce_ref, name)
-}
-
-save(subset_list,file="subset_list.RData")
-
-```
-
-#Barplot
+#Barplot to show cell type proportions for each sample
 ```{r}
 
 load("subset_list.RData")
 
-# Costruisci un data frame con tutte le proporzioni per ogni oggetto
 prop_df <- lapply(names(subset_list), function(name) {
   spe <- subset_list[[name]]
   tab <- table(spe$cell_type)
@@ -209,7 +215,8 @@ ggsave("cell_type_proportions.png", width = 10, height = 6, dpi = 300)
 
 ```
 
-#Barplot aggregato per condizione (SENZA BLOCCO 7)
+#Barplot to show cell types proportions for each condition
+From this point on block 7 samples won't be considered anymore.
 ```{r}
 list_wb7 <- subset_list[!names(subset_list) %in% c("c26_b7","c26STAT3_b7","sham_b7")]
 prop_df_condition <- lapply(list_wb7, function(spe) {
@@ -241,12 +248,11 @@ ggsave("cell_type_proportions_by_condition.png", width = 10, height = 6, dpi = 3
 
 ```
 
-
-#Confronto con risultati multiome murino
+#Same barplot for multiome annotations for comparison
 ```{r}
 
 sce_ref <- readRDS("multiome_sce.rds")
-sce_ref #intanto guarda com'è l'oggetto
+sce_ref 
 table(colData(sce_ref)$condition)
 
 prop_df_condition <- 
@@ -277,9 +283,9 @@ ggsave("cell_type_multiome.png", width = 10, height = 6, dpi = 300)
 
 ```
 
-#Tabelle proporzioni 
+#Table to see proportions 
 ```{r}
-#per campione
+#by sample
 celltype_table <- lapply(names(subset_list), function(sample_name) {
   spe <- subset_list[[sample_name]]
   df <- as.data.frame(colData(spe))
@@ -297,13 +303,12 @@ celltype_matrix <- celltype_table %>%
   pivot_wider(names_from = cell_type, values_from = proportion, values_fill = 0)
 
 celltype_matrix
-library(writexl)
 #write_xlsx(celltype_matrix, "celltype_proportions_per_sample.xlsx")
 
-#per tipo di campione (SENZA B7) ----------------------------------------------------
+#by condition
 ct_long <- lapply(list_wb7, function(spe) {
   data.frame(
-    tissue_type = unique(spe$tissue_type),   # è un valore unico ripetuto
+    tissue_type = unique(spe$tissue_type), 
     cell_type   = spe$cell_type
   )
 }) %>%
@@ -325,7 +330,7 @@ write_xlsx(props_wide, path = "celltype_by_tissue_type.xlsx")
 
 ```
 
-#boxplot cell type proportions stratified by condition (SENZA BLOCCO7)
+#boxplot of cell type proportions stratified by condition
 ```{r}
 prop_per_sample <- lapply(names(list_wb7), function(sample_name) {
   spe <- subset_list[[sample_name]]
@@ -359,7 +364,6 @@ ggsave("boxplot_celltype_prop_by_cond.png", width = 10, height = 6, dpi = 300)
 ```
 
 #Spatial relationship between trim and 2b myo
-#questo in realtà bisognerebbe vederlo sulla segmentazione
 ```{r}
 
 default_color <- "white"
@@ -392,8 +396,21 @@ plot_list <- lapply(names(subset_list), function(nm) {
 plot_list
 ```
  
- 
- 
+#MuSC annotation correction
+MuSC are defined as cells where Pax7 gene is expressed.
+```{r}
+
+subset_list <- lapply(subset_list, function(spe) {
+  print(table(spe$cell_type == "MuSC"))
+  pax7_pos <- counts(spe)["Pax7", ] > 0
+  spe$cell_type[pax7_pos] <- "MuSC"
+  print(table(spe$cell_type == "MuSC"))
+  return(spe)
+})
+save(subset_list,file="subset_list.RData")
+
+```
+
  
  
  

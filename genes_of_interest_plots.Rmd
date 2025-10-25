@@ -115,22 +115,28 @@ for(i in seq_along(markers)){
 Questi vanno interpretati con attenzione perché non posso correggere
 l'effetto di batch dato che non si tratta di pseudo-bulk.
 ```{r}
-data <- read.table("genes_of_interest.txt")
+data <- read.table("~/geni_di_interesse.txt")
 vec <- as.vector(data)
 markers <- unlist(vec[1], use.names = FALSE)
-markers
-
+load("~/subset_list.RData")
 subset_list
+
+#filtro gli spot ------------------------------------------------------------------------
+subset_list <- lapply(subset_list, function(spe) {
+   keep <- !is.na(spe$cell_type) 
+   spe[,keep]
+})
+
 mask <- grepl("^(sham_|c26_)", names(subset_list))
 filtered_list <- subset_list[mask]
 
-all_expr_values <- unlist(lapply(filtered_list, function(spe)
-  as.numeric(counts(spe)[markers, ])), use.names = FALSE)
-min_val <- min(all_expr_values, na.rm = TRUE)
-max_val <- max(all_expr_values, na.rm = TRUE)
-
 for (i in seq_along(markers)) {
   gene <- markers[i]
+  
+  all_expr_values <- unlist(lapply(filtered_list, function(spe)
+  as.numeric(counts(spe)[gene, ])), use.names = FALSE) 
+  min_val <- min(all_expr_values, na.rm = TRUE)
+  max_val <- max(all_expr_values, na.rm = TRUE)
   
   plot_list <- lapply(names(filtered_list), function(slice_name) {
     spe <- filtered_list[[slice_name]]
@@ -165,6 +171,123 @@ for (i in seq_along(markers)) {
 
 ```
 
+#Problema: pax7 dovrebbe essere un marker dei Musc.
+Studiare la sua correlazione con Cdkn2a, Cdkn1a, Trp53, Myog, Mif5, Itga7
+per gli sham e i c26
+PROBLEMA SONO GLI STESSI MUSC A ESSERE POCHISSIMI NEL DATASET QUINDI
+SECONDO ME IL PROBLEMA STA LA'.
+```{r}
+load("~/combined_spe_wob7.RData")
+sce_c26 <- combined_spe_wob7[,combined_spe_wob7$tissue_type == "c26"]
+sce_sham <- combined_spe_wob7[,combined_spe_wob7$tissue_type == "sham"]
+
+expr_pax7 <- as.vector(counts(sce_c26[rownames(sce_c26) == "Pax7",]))
+table(expr_pax7>0) #è pochissimo espresso
+summary(expr_pax7)
+
+expr_Cdkn1a <- as.vector(counts(sce_c26[rownames(sce_c26) == "Cdkn1a",]))
+expr_Cdkn2a <- as.vector(counts(sce_c26[rownames(sce_c26) == "Cdkn2a",]))
+expr_Trp53 <- as.vector(counts(sce_c26[rownames(sce_c26) == "Trp53",]))
+expr_Myog <- as.vector(counts(sce_c26[rownames(sce_c26) == "Myog",]))
+expr_Myf5 <- as.vector(counts(sce_c26[rownames(sce_c26) == "Myf5",]))
+table(expr_pax7>0,expr_Cdkn1a>0) #solo questo sembra particolarmente correlato, ma sono numeri piccoli
+table(expr_pax7>0,expr_Cdkn2a>0)
+table(expr_pax7>0,expr_Trp53>0)
+table(expr_pax7>0,expr_Myog>0)
+table(expr_pax7>0,expr_Myf5>0)
+
+#CORRELAZIONI 
+#C26
+mat <- counts(sce_c26[rownames(sce_c26) %in% c("Pax7","Cdkn1a","Cdkn2a","Trp53","Myog","Myf5"),])
+cor_mat <- cor(t(as.matrix(mat)),method="spearman")
+cor_mat 
+pheatmap::pheatmap(cor_mat)
+genes <- colnames(mat)
+results <- data.frame()
+markers <- c("Pax7","Cdkn1a","Cdkn2a","Trp53","Myog","Myf5")
+results <- data.frame()
+#non riesce neanche a fare un test perché ci sono troppe poche oss / valori troppo simili
+
+#SHAM
+mat <- counts(sce_sham[rownames(sce_sham) %in% c("Pax7","Cdkn1a","Cdkn2a","Trp53","Myog","Myf5"),])
+cor_mat <- cor(t(as.matrix(mat)))
+cor_mat 
+pheatmap::pheatmap(cor_mat)
+
+```
+
+#RIFACCIO LE PROIEZIONI SOLO PER QUESTI GENI SENZA SCALA COMUNE, CAMPIONE PER CAMPIONE
+#IN MODO DA POTER FARE UN CONFRONTO INTER CAMPIONE
+```{r}
+load("~/subset_list.RData")
+subset_list <- subset_list[!names(subset_list) %in% c("c26_b7","sham_b7")]
+
+#filtro gli spot
+subset_list <- lapply(subset_list, function(spe) {
+   keep <- !is.na(spe$cell_type) & colSums(counts(spe)) > 0
+   spe[,keep]
+})
+
+mask <- grepl("^(sham_|c26_)", names(subset_list))
+filtered_list <- subset_list[mask]
+
+markers <- c("Pax7", "Cdkn1a", "Cdkn2a", "Trp53", "Myog", "Myf5")
+
+split_chunks <- function(x, n) {
+  split(x, ceiling(seq_along(x) / n))
+}
+
+for (slice_name in names(filtered_list)) {
+  spe <- filtered_list[[slice_name]]
+  
+  # matrice di espressione per i geni scelti
+  expr_matrix <- counts(spe)[markers, , drop = FALSE]
+  
+  # scala comune per tutto il campione
+  global_min <- min(expr_matrix)
+  global_max <- max(expr_matrix)
+
+  # dividi i geni in gruppi da 6 (puoi cambiare n)
+  marker_chunks <- split_chunks(markers, n = 6)
+  
+  for (chunk_idx in seq_along(marker_chunks)) {
+    marker_subset <- marker_chunks[[chunk_idx]]
+    
+    plot_list <- lapply(marker_subset, function(gene) {
+      expr <- as.numeric(expr_matrix[gene, ])
+      coords <- as.data.frame(spatialCoords(spe))
+      coords$expr <- expr
+      
+      ggplot(coords, aes(x = pxl_col_in_fullres, y = pxl_row_in_fullres, color = expr)) +
+        geom_point(size = 0.3) +
+        coord_fixed() +
+        scale_y_reverse() +
+        ggtitle(gene) +
+        theme_void() +
+        theme(plot.title = element_text(size = 8))
+    })
+    
+    p <- wrap_plots(plot_list, nrow = 2, ncol = 3, guides = "collect") +
+      plot_annotation(title = paste("Spatial expression - Sample:", slice_name)) &
+      theme(
+        legend.key.width = unit(0.5, "lines"),
+        legend.key.height = unit(1, "lines"),
+        plot.title = element_text(hjust = 0.5, size = 14),
+        strip.text = element_text(size = 6)
+      ) &
+      scale_color_gradientn(
+        colors = rev(hcl.colors(9, "Rocket")),
+        limits = c(global_min, global_max)   # stessa scala per tutti i geni del campione
+      )
+    
+    print(p)
+    ggsave(
+      paste0("plots_", slice_name, "_part", chunk_idx, ".png"),
+      p, width = 12, height = 9, dpi = 300
+    )
+  }
+}
 
 
+```
 

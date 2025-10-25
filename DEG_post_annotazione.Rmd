@@ -40,120 +40,46 @@ library(ggspavis)
 library(openxlsx)
 ```
 
-#Confronto: cachetici vs sham (baseline)
-#dentro ogni tipo cellulare
-#e tra i mionuclei trim dei c26 e i mionuclei 2b degli sham
+Differentially Expressed Genes analysis: comparing gene expression in the same cell type,
+or in 2 different cell types across conditions.
 
-#oggetto spatial unico (NON RIPETERE)
+#Creating a unique spatial experiment object with all samples (excluding block 7).
 ```{r}
-
 load("~/subset_list.RData")
 
-#per distinguere poi i vari campioni
+#sample identifiers
 for (nm in names(subset_list)) {
   spe <- subset_list[[nm]]
-  colData(spe)$sample_id <- rep(nm, ncol(spe))  
+  colData(spe)$sample_id <- rep(nm, ncol(spe))
   subset_list[[nm]] <- spe
 }
 
 spe_list <- subset_list[names(subset_list)]
-combined_spe <- do.call(cbind, spe_list)
-table(colData(combined_spe)$cell_type)
+exclude_names <- c("sham_b7", "c26STAT3_b7", "c26_b7")
+combined_spe <- do.call(
+  cbind,
+  spe_list[!(names(spe_list) %in% exclude_names)]
+)
 table(colData(combined_spe)$sample_id)
 
 rm(subset_list)
-
-```
-
-#pseudobulk (NON RIPETERE)
-```{r}
-#il comando di elena per filtrare i geni è troppo pesante e facendo in un altro modo
-#me ne rimangono 49. 
-
 # Create pseudo-bulk for each cell_type in each sample
-pb_mult <- aggregateAcrossCells(combined_spe, use.assay.type = "counts", 
+pb_without_b7 <- aggregateAcrossCells(combined_spe, use.assay.type = "counts",
                                 id=DataFrame(label = combined_spe$cell_type,
                                              sample = combined_spe$sample_id))
-pb_mult <- logNormCounts(pb_mult)
-colnames(pb_mult) <- paste(pb_mult$cell_type, pb_mult$sample_id, sep = "_")
-saveRDS(pb_mult, file = "pb_celltype.rds")
+pb_without_b7  <- logNormCounts(pb_without_b7) #altre normalizzazioni?
+colnames(pb_without_b7 ) <- paste(pb_without_b7$cell_type, pb_without_b7$sample_id, sep = "_")
+saveRDS(pb_without_b7 , file = "pb_wb7.rds")
+
 
 ```
 
-#DIFFERENTIAL EXPRESSION ANALYSIS
-Ho tenuto la normalizzazione TMM di default perché con la upperquantile
-molti quantili venivano zero -> errore.
+#DIFFERENTIAL EXPRESSION ANALYSIS for all contrasts (WITHIN CELL TYPE).
+Note: I kept TMM normalization cause upper-quantile did not work due to the high number of zeros.
+filterByExpr: roughly speaking, the strategy keeps genes that have at least min.count
+reads in a worthwhile number of samples.
 ```{r}
-
-pb_mult <- readRDS("~/pb_celltype.rds")
-
-res_mult <- list()
-summary_list <- list()
-
-for (cell_type in unique(pb_mult$cell_type)) {
-  ct_pb <- pb_mult[, pb_mult$cell_type == cell_type]
-  
-  y <- DGEList(counts(ct_pb), samples = as.data.frame(colData(ct_pb)))
-  
-  keep <- filterByExpr(y, group = y$samples$tissue_type)
-  y <- y[keep,, keep.lib.sizes=FALSE]
-  
-  y <- calcNormFactors(y) 
-  
-  design <- model.matrix(~ 0 + tissue_type, y$samples)
-  contrast <- makeContrasts(tissue_typec26 - tissue_typesham,
-                            levels = design)
-  
-  y <- estimateDisp(y, design)
-  fit <- glmFit(y, design)
-  res_mult[[cell_type]] <- glmLRT(fit, contrast = contrast)
-  
-  # Risultati
-  res <- topTags(res_mult[[cell_type]], n = Inf)$table
-  res$significant <- res$FDR < 0.05
-  sig <- res[res$significant, ]
-  sig_up <- sig[sig$logFC >= 0, ]
-  sig_down <- sig[sig$logFC < 0, ]
-  
-  # Salvataggio in file Excel
-  # wb <- createWorkbook()
-  # addWorksheet(wb, "Tutti_geni")
-  # writeData(wb, "Tutti_geni", res, rowNames = TRUE)
-  # addWorksheet(wb, "Significativi")
-  # writeData(wb, "Significativi", sig, rowNames = TRUE)
-  # addWorksheet(wb, "Upregolati")
-  # writeData(wb, "Upregolati", sig_up, rowNames = TRUE)
-  # addWorksheet(wb, "Downregolati")
-  # writeData(wb, "Downregolati", sig_down, rowNames = TRUE)
-  # 
-  # clean_name <- gsub("[^[:alnum:]_]", "_", cell_type)
-  # saveWorkbook(wb, paste0("dge_", clean_name, ".xlsx"), overwrite = TRUE)
-  # 
-  # Riepilogo
-  gene_summary <- data.frame(
-    cell_type = cell_type,
-    Geni_considerati = nrow(res),
-    Geni_significativi = nrow(sig),
-    Upregolati = nrow(sig_up),
-    Downregolati = nrow(sig_down)
-  )
-  
-  summary_list[[cell_type]] <- gene_summary
-}
-
-#visualizza tabella riassuntiva
-summary_df <- do.call(rbind, summary_list)
-print(summary_df)
-
-```
-
-
-
-#DEGs FOR ALL SAMPLE TYPES 
-filterByExpr: roughly speaking, the strategy keeps genes that have at least min.count reads in a worthwhile number of samples.
-```{r}
-
-pb_mult <- readRDS("~/pb_celltype.rds")
+pb_mult <- readRDS("~/pb_wb7.rds")
 
 lrt_list <- list()
 summary_list <- list()
@@ -213,13 +139,13 @@ for (contrast_name in names(contrast_list)) {
   }
 }
 
-# Tabella riassuntiva
+#Summary
 summary_df <- do.call(rbind, summary_list)
 print(summary_df)
 
 ```
 
-#salvataggio 
+#saving results
 ```{r}
 library(openxlsx)
 
@@ -260,7 +186,7 @@ for (contrast_name in names(lrt_list)) {
 ```
 
 
-#Confronto tra mionuclei trim63 dei c26 e mionuclei 2b degli sham
+#Comparison between trim63 myonuclei from c26 samples and myonuclei 2b from sham samples.
 ```{r}
 pb_mult$group <- paste0(pb_mult$cell_type, "_", pb_mult$tissue_type)
 pb_sub <- pb_mult[, pb_mult$group %in% c("Myonuclei_Trim63_c26", "Myonuclei_IIb_sham")]

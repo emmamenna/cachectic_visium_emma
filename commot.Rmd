@@ -1,0 +1,138 @@
+---
+title: "commot"
+output: html_document
+date: "2025-10-23"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(reticulate)
+library(zellkonverter)
+library(SingleCellExperiment)
+library(SpatialExperiment)
+library(OSTA.data)
+library(SpatialExperiment)
+library(scater)
+library(BiocParallel)
+```
+
+#https://github.com/lmweber/OSTA/blob/sandbox-ccc/inst/pages/img-cell-cell-communication.qmd
+```{r}
+# set up Python environment using reticulate
+
+# install Miniconda
+# set to accept terms of service
+Sys.setenv(CONDA_PLUGINS_AUTO_ACCEPT_TOS = "yes")
+Sys.setenv(CI = "true")
+#if (is.null(miniconda_path())) {
+install_miniconda()
+#}
+
+# create environment
+env <- "img-ccc"
+#if (!(env %in% conda_list()$name)) {
+conda_create(env, packages = "python=3.11")
+#}
+use_condaenv(env, required = TRUE)
+
+# install Python packages from conda-forge
+# these are dependency packages for commot that need to be installed from conda-forge (not PyPI)
+conda_install(
+  envname = env, 
+  packages = c("libcxx", "llvm-openmp", "llvmlite", "numba"), 
+  channel = "conda-forge"
+)
+# install Python packages from PyPI
+# commot is available from PyPI
+conda_install(
+  envname = env, 
+  packages = c("commot==0.0.3", "anndata==0.12.2", "pandas==2.3.2"), 
+  pip = TRUE
+)
+
+# run {python} chunks via reticulate
+knitr::opts_chunk$set(python.reticulate = TRUE)
+
+#----- problemi di incompatibilità versioni pacchetti ------------------------------
+# Creiamo un nuovo ambiente pulito
+reticulate::conda_create("commot-env", python_version = "3.11")  # o usa v3.10 se preferisci
+
+# Installiamo commot e le versioni compatibili di anndata
+reticulate::conda_install(
+  envname = "commot-env",
+  packages = c(
+    "pip",
+    "numpy",
+    "scipy",
+    "pandas",
+    "anndata==0.9.1"   # versione compatibile con commot
+  ),
+  pip = TRUE
+)
+
+# Installa commot via pip
+reticulate::py_install("commot", envname = "commot-env", pip = TRUE)
+
+library(reticulate)
+
+# punta all'ambiente appena creato
+reticulate::use_condaenv("commot-env", required = TRUE)
+
+# importa commot
+commot <- import("commot")
+
+
+```
+
+
+```{r run-commot}
+# run COMMOT using reticulate
+ad <- import("anndata")
+pd <- import("pandas")
+ct <- import("commot")
+
+# retrieve L-R interactions from CellChatDB and filter for those that are 
+# fully covered by the 1k-plex CosMx panel
+db <- ct$pp$ligand_receptor_database(database = "CellChat", species = "mouse")
+names(db) <- c("ligand", "receptor", "pathway", "type")
+nrow(db)
+
+db <- db[apply(db, 1, \(.) {
+  rs <- strsplit(.["receptor"], "_")
+  lr <- c(.["ligand"], unlist(rs))
+  all(lr %in% rownames(spe))
+}), ]
+nrow(db)
+
+# subset to features being considered
+rs <- sapply(strsplit(db$receptor, "_"), .subset, 1)
+nrow(spe <- spe[unique(c(db$ligand, rs)), ])
+
+is <- split(colnames(spe), spe$fov)
+sr <- bplapply(is, BPPARAM = bp, \(.) {
+  # skip FoV when there are too few cells
+  if (length(.) < 100) return(NULL)
+  ad <- SCE2AnnData(spe[, .], X_name = "logcounts")
+  ct$tl$spatial_communication(
+    ad, 
+    database_name = "CellChatDB", 
+    # assume average cell is 10x10um; here, we consider a 
+    # distance threshold of 10 cells = 0.1mm
+    dis_thr = 0.1, 
+    df_ligrec = db, 
+    heteromeric = TRUE, 
+    pathway_sum = TRUE, 
+    heteromeric_rule = "min", 
+    heteromeric_delimiter = "_")
+  list(
+    ad$obsm["commot-CellChatDB-sum-sender"], 
+    ad$obsm["commot-CellChatDB-sum-receiver"])
+})
+```
+
+#VALERIO DICE DI USARE GLI ENVIRONMENT CHE CORREGGONO LORO LE VERSIONI
+
+
