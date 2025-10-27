@@ -64,7 +64,7 @@ save(combined_spe_wob7, file="combined_spe_wob7.RData")
 ```
 
 
-Performs spatial tests on spatial cytometry data.We can test whether one cell type tends to be more localised with another cell type in one condition compared to the other. 
+Performs spatial tests on spatial cytometry data. We can test whether one cell type tends to be more localised with another cell type in one condition compared to the other. 
 NB: qui non usa i counts ma le coordinate e la classificazione delle cellule
 quindi la normalizzazione non serve.
 
@@ -73,8 +73,8 @@ Differences of this statistic between two conditions is modelled using a weighte
 library(spicyR)
 ?spicy
 
-combined_spe_wob7
 load("~/combined_spe_wob7.RData")
+combined_spe_wob7
 
 #tolgo sham per fare il confronto trim - 2b
 combined_spe_nosham <- combined_spe_wob7[,!combined_spe_wob7$tissue_type == "sham"]
@@ -93,38 +93,19 @@ spicyTest <- spicy(
   cellType = "cell_type",
   imageID = "sample_id",
   spatialCoords = c("pxl_col_in_fullres", "pxl_row_in_fullres"),
-  from = "Myonuclei_IIb",
-  to = "Myonuclei_Trim63",
+  from = "Myonuclei_Trim63",
+  to = "Myonuclei_IIb",
   #Rs = seq(0, 3000, by = 200) #non si riesce a cambiare
 )
 spicyTest$coefficient
 spicyTest$p.value
-spicyTest$pairwiseAssoc #weird 
-
-#INDAGARE DI +
-#spicy() dopo può standardizzare o pesare quei valori, per cui i coefficienti del modello possono essere positivi anche se le curve individuali sono negative.
+spicyTest$pairwiseAssoc
 
 #fox0 unico significativo ma di pochissimo (+ vicini)
-
-# #versione con bootstrap
-# spicyTestBoot <- spicy(
-#   combined_spe_nosham,
-#   condition = "tissue_type",
-#   cellType = "cell_type",
-#   imageID = "sample_id",
-#   spatialCoords = c("pxl_col_in_fullres", "pxl_row_in_fullres"),
-#   from = "Myonuclei_IIb",
-#   to = "Myonuclei_Trim63",
-#   nsim = 1000
-# )
-# spicyTestBoot$coefficient
-# spicyTestBoot$p.value
-#stessa cosa
 
 #Il warning non si riferisce al numero totale di cellule per ciascun tipo (cell_type) o al numero di righe nel tuo combined_spe_nosham, ma piuttosto al numero di immagini (sample_id) in cui quella coppia di tipi cellulari (from, to) è effettivamente presente insieme e ha interazioni osservabili.
 table(combined_spe_nosham$cell_type, combined_spe_nosham$sample_id)
 
-#topPairs(spicyTest) quando guardo + tipi cell
 ```
 
 #Visualizzazione test
@@ -138,8 +119,8 @@ table(combined_spe_nosham$cell_type, combined_spe_nosham$sample_id)
 # )
 
 spicyBoxPlot(results = spicyTest, 
-             from = "Myonuclei_IIb",
-             to = "Myonuclei_Trim63",  
+             from = "Myonuclei_Trim63",
+             to = "Myonuclei_IIb",  
              rank = 1)
 ```
 
@@ -148,7 +129,7 @@ getAnywhere(inhomLPair)
 ```{r}
 inhomLPair_mod <- function (
     data, 
-    Rs = seq(300, 5000, by = 200), 
+    Rs = seq(100, 5000, by = 200), 
     sigma = NULL, 
     window = "convex", 
     window.length = NULL, 
@@ -169,7 +150,7 @@ inhomLPair_mod <- function (
     )
 
     # --- Raggio massimo e valori di R ---
-    if (is.null(Rs)) Rs = seq(300, 5000, by = 200)
+    if (is.null(Rs)) Rs = seq(100, 5000, by = 200)
     maxR <- min(ow$xrange[2] - ow$xrange[1], ow$yrange[2] - ow$yrange[1]) / 2.01
     Rs <- unique(pmin(c(0, sort(Rs)), maxR))
 
@@ -336,6 +317,11 @@ getPairwise_mod <- function (cells, imageID = "imageID", cellType = "cellType",
 
 #Curve L per ogni campione
 ```{r}
+load("~/combined_spe_wob7.RData")
+
+#tolgo sham per fare il confronto trim - 2b
+combined_spe_nosham <- combined_spe_wob7[,!combined_spe_wob7$tissue_type == "sham"]
+table(combined_spe_nosham$cell_type, combined_spe_nosham$tissue_type)
 
 all_Lcurves <- list()
 unique_samples <- unique(combined_spe_nosham$sample_id)
@@ -348,8 +334,8 @@ for (sample in unique_samples) {
     imageID = "sample_id",
     cellType = "cell_type",
     spatialCoords = c("pxl_col_in_fullres", "pxl_row_in_fullres"),
-    from = "Myonuclei_IIb",
-    to   = "Myonuclei_Trim63"
+    from = "Myonuclei_Trim63",
+    to   = "Myonuclei_IIb"
   )
   
   all_Lcurves[[as.character(sample)]] <- Lcurve
@@ -366,7 +352,7 @@ for (sample in names(all_Lcurves)) {
       y = "L(r)"
     )
   print(p)
-  # ggsave(paste0("Lcurve_", sample, ".png"), plot = p, width = 6, height = 4)
+  ggsave(paste0("Lcurve_", sample, ".png"), plot = p, width = 6, height = 4)
 }
 
 #QUESTO è GIA L-R !!!

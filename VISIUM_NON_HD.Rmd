@@ -36,6 +36,7 @@ library(VisiumIO)
 library(spacexr)
 library(SpotSweeper)
 library(ggspavis)
+library(purrr)
 ```
 
 #Obiettivo: stessa analisi di deconvoluzione e confronto risultati
@@ -212,5 +213,70 @@ write_xlsx(celltype_matrix, "prop_nonhd.xlsx")
 
 ```
 
+#Paragoni per campioni (giusto?)
+```{r}
+#C26T16_1 = murf1_b2
+#C26T16_3 = murf1_b9
+#C26T17_1 = murf1_b3
+#C26T17_2 = murf1_b5
 
+load("~/visium_list.RData")
+load("~/subset_list.RData")
+
+murf1_list <- subset_list[names(subset_list) %in% c("c26murf1_b2","c26murf1_b3","c26murf1_b5","c26murf1_b9")]
+visium_list <- visium_list[names(visium_list) %in% c("C26T16_1","C26T16_3","C26T17_1","C26T17_2")]
+
+names(visium_list) <- c("coor_b2","corr_b9","corr_b3","corr_b5")
+
+prop_df_nnhd <- lapply(names(visium_list), function(name) {
+  spe <- visium_list[[name]]
+  tab <- table(spe$cell_type)
+  prop <- prop.table(tab)
+  data.frame(
+    sample = name,
+    cell_type = names(prop),
+    proportion = as.numeric(prop)
+  )
+}) |> bind_rows()
+
+ggplot(prop_df_nnhd, aes(x = sample, y = proportion, fill = cell_type)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = your_color_vector) +
+  theme_minimal() +
+  labs(
+    title = "Proporzioni dei tipi cellulari per campione",
+    x = "Campione (visium_list)",
+    y = "Proporzione",
+    fill = "Tipo Cellulare"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggsave("prop_confr_NNHD.png", width = 10, height = 6, dpi = 300)
+
+prop_df <- lapply(names(murf1_list), function(name) {
+  spe <- murf1_list[[name]]
+  tab <- table(spe$cell_type)
+  prop <- prop.table(tab)
+  data.frame(
+    sample = name,
+    cell_type = names(prop),
+    proportion = as.numeric(prop)
+  )
+}) |> bind_rows()
+
+ggplot(prop_df, aes(x = sample, y = proportion, fill = cell_type)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = your_color_vector) +
+  theme_minimal() +
+  labs(
+    title = "Proporzioni dei tipi cellulari per campione",
+    x = "Campione (murf1_list)",
+    y = "Proporzione",
+    fill = "Tipo Cellulare"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggsave("murf1_HD.png", width = 10, height = 6, dpi = 300)
+
+```
 

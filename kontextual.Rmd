@@ -69,16 +69,10 @@ plot_list
 #rispetto a quanto ci si aspetterebbe per caso se fossero distribuiti
 #casualmente all’interno del contesto.
 
-#1. First, they can be defined based on our biological understanding of the cell types. We can represent this by #creating a named list containing the names of each parent and the associated vector of child cell types.
-#2. Clustering gerarchico -> anche volendo non funziona con matrici sparse
-
-#PROVO CON UN CAMPIONE INTANTO
 ```{r}
 
 load("~/subset_list_filtered.RData") #NB: usa solo le coordinate, non importa la normalizzazione
-#prendo i mionuclei come contesto di riferimento (rientrano anche i MuSC?)
-
-spe <- subset_list$c26_b4
+#prendo i mionuclei come contesto di riferimento
 
 biologicalHierarchy <- list(
   "myonuclei" = c("Myonuclei_MTJ", "Myonuclei_Trim63", "Myonuclei_IIb",
@@ -87,30 +81,12 @@ biologicalHierarchy <- list(
   "stromal"   = c("Endothelial", "FAPs", "Pericyte", "Smooth_Muscular", "Tenocyte"),
   "rare"      = c("MuSC", "Nervous_System", "Immune_Cells")
 )
+
+spe <- subset_list$c26_b2
 spe$cellTypeNew <- spe$cell_type
 levels(spe$cellTypeNew) <- c(levels(spe$cellTypeNew),"Myonuclei")
 spe$cellTypeNew[spe$cell_type %in% biologicalHierarchy$myonuclei] <- "Myonuclei"
 
-?Kontextual
-#Qui trova un valore solo:
-# kont_res <- Kontextual(
-#   cells = spe,
-#   r = 100,
-#   from = "Myonuclei_Trim63",
-#   to = "Myonuclei_IIb",
-#   parent = biologicalHierarchy$myonuclei,
-#   cellType = "cell_type",
-#   inhom = TRUE,
-#   spatialCoords = c("pxl_col_in_fullres", "pxl_row_in_fullres"),
-#   imageID = "sample_id"
-# )
-# kont_res
-
-#ATTENZIONE: I VALORI RIPORTATI SONO sqrt(L(r)/pi) - r!
-#QUINDI CONTA LO ZERO COME REFERENCE
-#"no spatial association = centered in 0 with small variance" dall'articolo
-
-#plot curve
 curves <- kontextCurve(
   cells = spe,
   from = "Myonuclei_Trim63",
@@ -128,9 +104,33 @@ curves <- kontextCurve(
 
 curves 
 kontextPlot(curves)
+#ATTENZIONE: I VALORI RIPORTATI SONO sqrt(L(r)/pi) - r!
+#QUINDI CONTA LO ZERO COME REFERENCE
+#"no spatial association = centered in 0 with small variance" dall'articolo
+#quindi in questo caso abbiamo un'attrazione da un certo raggio in poi
 
-#cambia tanto considerare il contesto (per questo campione)
-#NB: senza l'inomogeneità anche l'azzurra viene positiva
+#per un altro campione --------------------------------------------------------------------
+spe <- subset_list$c26_b4
+spe$cellTypeNew <- spe$cell_type
+levels(spe$cellTypeNew) <- c(levels(spe$cellTypeNew),"Myonuclei")
+spe$cellTypeNew[spe$cell_type %in% biologicalHierarchy$myonuclei] <- "Myonuclei"
+
+curves <- kontextCurve(
+  cells = spe,
+  from = "Myonuclei_Trim63",
+  to = "Myonuclei_IIb",
+  parent = biologicalHierarchy$myonuclei,
+  rs = seq(50,5000,1000),
+  cellType = "cell_type",
+  spatialCoords = c("pxl_col_in_fullres", "pxl_row_in_fullres"),
+  imageID = "sample_id",
+  #inhom = TRUE
+)
+
+curves 
+kontextPlot(curves)
+#il raggio è 8 bin = 25 pixel circa quindi ci può stare
+
 
 ```
 
@@ -142,7 +142,8 @@ subset_list <- subset_list[!names(subset_list) %in% c("sham_b1","sham_b6","sham_
 plot_list <- list()  # crea lista vuota per salvare i plot
 
 #NON VA PER QUASI NESSUN CAMPIONE
-for (i in seq_along(c26_list)) {
+#se no mi baso direttamente sulle curve senza contesto e pace
+for (i in seq_along(subset_list)) {
   spe_i <- subset_list[[i]] 
   
   curves <- kontextCurve(
@@ -151,7 +152,7 @@ for (i in seq_along(c26_list)) {
     to = "Myonuclei_IIb",
     parent = c("Myonuclei_MTJ", "Myonuclei_Trim63","Myonuclei_IIb","Myonuclei_IIx_IIb","Myonuclei_IIx",
                "Myonuclei_NMJ","Myonuclei_IIx_IIa"),
-    rs = seq(50, 510, 50),
+    rs = seq(50,5000,1000),,
     cellType = "cell_type",
     spatialCoords = c("pxl_col_in_fullres", "pxl_row_in_fullres"),
     imageID = "sample_id",

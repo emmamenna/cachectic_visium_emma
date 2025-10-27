@@ -37,6 +37,7 @@ library(spacexr)
 library(SpotSweeper)
 library(ggspavis)
 library(writexl)
+library(lme4)
 ```
 
 #Deconvolution function
@@ -399,6 +400,10 @@ plot_list
 #MuSC annotation correction
 MuSC are defined as cells where Pax7 gene is expressed.
 ```{r}
+#IMPORTANTE: DEVO ANCHE TOGLIERE QUELLI DOVE NON E' ESPRESSO?
+multiome_sce <- readRDS("~/multiome_sce.rds")
+table(multiome_sce$subclusters == "MuSC",counts(multiome_sce)["Pax7", ] > 0)
+#nel multiome non è così quindi intanto le lascio
 
 subset_list <- lapply(subset_list, function(spe) {
   print(table(spe$cell_type == "MuSC"))
@@ -411,7 +416,61 @@ save(subset_list,file="subset_list.RData")
 
 ```
 
- 
+
+#Creo un oggetto spatial unico e indago se i MuSC aumentano tra c26 e sham
+```{r}
+for (nm in names(subset_list)) {
+  spe <- subset_list[[nm]]
+  colData(spe)$sample_id <- rep(nm, ncol(spe))  
+  subset_list[[nm]] <- spe
+}
+
+spe_list <- subset_list[names(subset_list)]
+exclude_names <- c("sham_b7", "c26STAT3_b7", "c26_b7")
+combined_spe_wob7 <- do.call(
+  cbind, 
+  spe_list[!(names(spe_list) %in% exclude_names)]
+)
+table(colData(combined_spe_wob7)$sample_id)
+
+rm(subset_list)
+#REMOVING NAs
+keep <- !is.na(combined_spe_wob7$cell_type)
+combined_spe_wob7[,keep]
+save(combined_spe_wob7, file="combined_spe_wob7.RData")
+
+table(combined_spe_wob7$cell_type=="MuSC",combined_spe_wob7$tissue_type)
+prop.table(table(combined_spe_wob7$cell_type=="MuSC",combined_spe_wob7$tissue_type))
+#sono di più negli sham che nei c26 e molte di più nei trattamenti (torna!)
+table(combined_spe_wob7$cell_type=="MuSC",combined_spe_wob7$sample_id)
+
+#Modello binomiale per testare l'effetto della condizione
+y <- ifelse(combined_spe_wob7$cell_type=="MuSC",1,0)
+
+combined_spe_wob7$tissue_type <- relevel(combined_spe_wob7$tissue_type, ref = "sham")
+
+mod_mixed <- glmer(
+  I(cell_type == "MuSC") ~ tissue_type + (1 | sample_id),
+  data = as.data.frame(colData(combined_spe_wob7)),
+  family = binomial
+)
+
+summary(mod_mixed) 
+#si confermano le previsioni: con c26 diminuiscono rispetto a sham e con i trattamenti aumentano
+
+#visualizzazione?
+y <- prop.table(table(combined_spe_wob7$cell_type=="MuSC",combined_spe_wob7$sample_id))[2,]
+x <- c(rep("c26",3),rep("c26fox0",4),rep("c26murf1",4),rep("c26SMAD23",4),rep("c26STAT3",3),rep("sham",3))
+x <- as.factor(x)
+png("boxplot.png", width = 800, height = 600, res = 120)
+boxplot(y ~ x)
+```
+
+
+
+
+
+
  
  
  
