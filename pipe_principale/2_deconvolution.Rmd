@@ -124,45 +124,62 @@ spots are coloured according to the probabiluty (weigth) for that cell type. In 
 spot is coloured according to its clustering labels (the cell type with highest weigth).
 ```{r}
 
-p <- lapply(names(ws), \(.) 
-    plotCoords(spe, annotate = ., point_size = 0.1)
-  ) |>
-    wrap_plots(nrow = 3, ncol=5, guides = "collect") & 
-    theme(
-      legend.key.width = unit(0.5, "lines"),
-      legend.key.height = unit(1, "lines"),
-      strip.text = element_text(size = 5) 
-    ) & 
-    scale_color_gradientn(colors = rev(hcl.colors(9, "Rocket")))
-  
-ggsave(paste0(out_prefix, "_types.png"), p, width = 10, height = 8, dpi = 300)
-  
-your_color_vector <- c(
-    "Endothelial" = "#0072B2",       # blu vivo
-    "FAPs" = "#009E73",              # verde vivo
-    "Immune_Cells" = "#D55E00",      # arancione-rosso
-    "MuSC" = "#E69F00",              # arancione
-    "Myonuclei_IIb" = "#CC79A7",     # magenta
-    "Myonuclei_IIx" = "#56B4E9",     # azzurro chiaro
-    "Myonuclei_IIx_IIa" = "#F0E442", # giallo
-    "Myonuclei_IIx_IIb" = "#9B59B6", # viola chiaro
-    "Myonuclei_MTJ" = "#0099B4",     # turchese
-    "Myonuclei_NMJ" = "#DDAA33",     # senape
-    "Myonuclei_Trim63" = "#CC3311",  # rosso scuro
-    "Nervous_System" = "#44AA99",    # verde acqua
-    "Pericyte" = "#AA4499",          # viola/rosa
-    "Smooth_Muscular" = "#332288",   # blu-viola scuro
-    "Tenocyte" = "#A3E635"           # verde lime
-)
+# subset_list <- lapply(subset_list, function(spe) {
+#    keep <- !is.na(spe$cell_type) & colSums(counts(spe)) > 0
+#    spe[,keep]
+# })
+# 
+# save(subset_list, file = "subset_list.RData")
 
-stat1 <- plotCoords(spe, annotate = "cell_type", point_size = 0.5) +
-    scale_color_manual(values = your_color_vector) +
-    theme(
-      legend.key.width = unit(0.5, "lines"),
-      legend.key.height = unit(1, "lines")
-    )
+for (spe_name in names(subset_list)) {
+  spe <- subset_list[[spe_name]]
+  ws <- colData(spe)[,seq(8,22,1)]
+  p <- lapply(names(ws), function(nm) {
+  plotCoords(spe, annotate = nm, point_size = 0.1) +
+    scale_color_gradientn(
+      colors = rev(hcl.colors(9, "Rocket")),
+      limits = c(0, 1)  # fissa scala da 0 a 1
+    ) +
+    ggtitle(nm)
+  })
+
+  final_plot <- wrap_plots(p, nrow = 3, ncol = 5, guides = "collect") &
+  theme(
+    legend.key.width = unit(0.5, "lines"),
+    legend.key.height = unit(1, "lines"),
+    strip.text = element_text(size = 5)
+  ) &
+  scale_color_gradientn(colors = rev(hcl.colors(9, "Rocket")), limits = c(0, 1))
+
+  ggsave(paste0(spe_name, "_types.png"), final_plot, width = 10, height = 8, dpi = 300)
   
-ggsave(paste0(out_prefix, "_dec.png"), stat1, width = 10, height = 8, dpi = 300)
+# your_color_vector <- c(
+#     "Endothelial" = "#0072B2",       # blu vivo
+#     "FAPs" = "#009E73",              # verde vivo
+#     "Immune_Cells" = "#D55E00",      # arancione-rosso
+#     "MuSC" = "#E69F00",              # arancione
+#     "Myonuclei_IIb" = "#CC79A7",     # magenta
+#     "Myonuclei_IIx" = "#56B4E9",     # azzurro chiaro
+#     "Myonuclei_IIx_IIa" = "#F0E442", # giallo
+#     "Myonuclei_IIx_IIb" = "#9B59B6", # viola chiaro
+#     "Myonuclei_MTJ" = "#0099B4",     # turchese
+#     "Myonuclei_NMJ" = "#DDAA33",     # senape
+#     "Myonuclei_Trim63" = "#CC3311",  # rosso scuro
+#     "Nervous_System" = "#44AA99",    # verde acqua
+#     "Pericyte" = "#AA4499",          # viola/rosa
+#     "Smooth_Muscular" = "#332288",   # blu-viola scuro
+#     "Tenocyte" = "#A3E635"           # verde lime
+# )
+# 
+# stat1 <- plotCoords(spe, annotate = "cell_type", point_size = 0.5) +
+#     scale_color_manual(values = your_color_vector) +
+#     theme(
+#       legend.key.width = unit(0.5, "lines"),
+#       legend.key.height = unit(1, "lines")
+#     )
+#   
+# ggsave(paste0(out_prefix, "_dec.png"), stat1, width = 10, height = 8, dpi = 300)
+}
   
 ```
 
