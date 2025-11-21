@@ -86,8 +86,8 @@ summary_list <- list()
 
 contrast_list <- list(
   "C26_vs_SHAM"   = c("tissue_typec26 - tissue_typesham"),
-  "FOXO_vs_C26"   = c("-tissue_typec26"),
-  "FOXO_vs_SHAM"  = c("-tissue_typesham"),
+  "FOXO_vs_C26"   = c("tissue_typec26foxO - tissue_typec26"),
+  "FOXO_vs_SHAM"  = c("tissue_typec26foxO - tissue_typesham"),
   "STAT3_vs_C26"  = c("tissue_typec26STAT3 - tissue_typec26"),
   "STAT3_vs_SHAM" = c("tissue_typec26STAT3 - tissue_typesham"),
   "MURF1_vs_C26"  = c("tissue_typec26murf1 - tissue_typec26"),
@@ -154,30 +154,28 @@ if (!dir.exists(outdir)) dir.create(outdir)
 
 for (contrast_name in names(lrt_list)) {
   wb <- createWorkbook()
-  
+
   for (cell_type in names(lrt_list[[contrast_name]])) {
     res     <- lrt_list[[contrast_name]][[cell_type]]$full
     sig     <- lrt_list[[contrast_name]][[cell_type]]$sig
     sig_up  <- lrt_list[[contrast_name]][[cell_type]]$up
     sig_down<- lrt_list[[contrast_name]][[cell_type]]$down
-    
-    # nome foglio pulito
+
     clean_name <- gsub("[^[:alnum:]_]", "_", cell_type)
-    
-    # foglio per cell_type con sottosezioni
+
     addWorksheet(wb, paste0(clean_name, "_all"))
     writeData(wb, paste0(clean_name, "_all"), res, rowNames = TRUE)
-    
+
     addWorksheet(wb, paste0(clean_name, "_sig"))
     writeData(wb, paste0(clean_name, "_sig"), sig, rowNames = TRUE)
-    
+
     addWorksheet(wb, paste0(clean_name, "_up"))
     writeData(wb, paste0(clean_name, "_up"), sig_up, rowNames = TRUE)
-    
+
     addWorksheet(wb, paste0(clean_name, "_down"))
     writeData(wb, paste0(clean_name, "_down"), sig_down, rowNames = TRUE)
   }
-  
+
   # salva il file excel del contrasto
   clean_contrast <- gsub("[^[:alnum:]_]", "_", contrast_name)
   saveWorkbook(wb, file.path(outdir, paste0("dge_", clean_contrast, ".xlsx")), overwrite = TRUE)
@@ -188,6 +186,7 @@ for (contrast_name in names(lrt_list)) {
 
 #Comparison between trim63 myonuclei from c26 samples and myonuclei 2b from sham samples.
 ```{r}
+pb_mult <- readRDS("~/pb_wb7.rds")
 pb_mult$group <- paste0(pb_mult$cell_type, "_", pb_mult$tissue_type)
 pb_sub <- pb_mult[, pb_mult$group %in% c("Myonuclei_Trim63_c26", "Myonuclei_IIb_sham")]
 pb_sub$group <- factor(pb_sub$group, levels = c("Myonuclei_IIb_sham", "Myonuclei_Trim63_c26"))
@@ -206,17 +205,17 @@ sig <- res[res$significant, ]
 sig_up <- sig[sig$logFC >= 0, ]
 sig_down <- sig[sig$logFC < 0, ]
   
-wb <- createWorkbook()
-addWorksheet(wb, "Tutti_geni")
-writeData(wb, "Tutti_geni", res, rowNames = TRUE)
-addWorksheet(wb, "Significativi")
-writeData(wb, "Significativi", sig, rowNames = TRUE)
-addWorksheet(wb, "Upregolati")
-writeData(wb, "Upregolati", sig_up, rowNames = TRUE)
-addWorksheet(wb, "Downregolati")
-writeData(wb, "Downregolati", sig_down, rowNames = TRUE)
-saveWorkbook(wb,"trimc26_2bsham.xlsx", overwrite = TRUE)
-  
+# wb <- createWorkbook()
+# addWorksheet(wb, "Tutti_geni")
+# writeData(wb, "Tutti_geni", res, rowNames = TRUE)
+# addWorksheet(wb, "Significativi")
+# writeData(wb, "Significativi", sig, rowNames = TRUE)
+# addWorksheet(wb, "Upregolati")
+# writeData(wb, "Upregolati", sig_up, rowNames = TRUE)
+# addWorksheet(wb, "Downregolati")
+# writeData(wb, "Downregolati", sig_down, rowNames = TRUE)
+# saveWorkbook(wb,"trimc26_2bsham.xlsx", overwrite = TRUE)
+
 gene_summary <- data.frame(
     Geni_considerati = nrow(res),
     Geni_significativi = nrow(sig),
@@ -227,6 +226,53 @@ gene_summary <- data.frame(
 gene_summary
   
 ```
+#3. TRIM C26 VS MYONUCLEI OVERALL SHAM ------------------------------------------------------------------------
+```{r}
+pb_mult <- readRDS("~/pb_wb7.rds")
+pb_mult$group <- paste0(pb_mult$cell_type, "_", pb_mult$tissue_type)
+mio_ov_sham <- unique(grep(paste0("^", "Myonuclei", ".*", "sham"), pb_mult$group, value = TRUE))
+pb_sub <- pb_mult[, pb_mult$group %in% c("Myonuclei_Trim63_c26", mio_ov_sham)]
+pb_sub$group[pb_sub$group %in% mio_ov_sham] <- "Myonuclei_sham"
+pb_sub$group <- as.factor(pb_sub$group)
+pb_comb <- aggregateData(pb_sub, assay = "counts", fun = "sum", by = "sample_id")
+colData(pb_comb)$group <- pb_sub$group[match(colnames(pb_comb), pb_sub$sample_id)]
+names(assays(pb_comb)) <- "counts"
 
+y <- DGEList(counts(pb_comb), samples = as.data.frame(colData(pb_comb)))
+keep <- filterByExpr(y, group = y$samples$group)
+y <- y[keep,, keep.lib.sizes=FALSE]
+y <- calcNormFactors(y)
+design <- model.matrix(~ group, data=y$samples)
+y <- estimateDisp(y, design)
+fit <- glmFit(y, design)
+lrt <- glmLRT(fit, coef = 2)
+top <- topTags(lrt, n = Inf)$table
+top$SYMBOL <- rownames(top)
 
+top$significant <- top$FDR < 0.05
+sig <- top[top$significant, ]
+sig_up <- sig[sig$logFC >= 0, ]
+sig_down <- sig[sig$logFC < 0, ]
+  
+wb <- createWorkbook()
+addWorksheet(wb, "Tutti_geni")
+writeData(wb, "Tutti_geni", top, rowNames = TRUE)
+addWorksheet(wb, "Significativi")
+writeData(wb, "Significativi", sig, rowNames = TRUE)
+addWorksheet(wb, "Upregolati")
+writeData(wb, "Upregolati", sig_up, rowNames = TRUE)
+addWorksheet(wb, "Downregolati")
+writeData(wb, "Downregolati", sig_down, rowNames = TRUE)
+saveWorkbook(wb,"trimc26_overallsham.xlsx", overwrite = TRUE)
+
+gene_summary <- data.frame(
+    Geni_considerati = nrow(top),
+    Geni_significativi = nrow(sig),
+    Upregolati = nrow(sig_up),
+    Downregolati = nrow(sig_down)
+)
+  
+gene_summary
+  
+```
 

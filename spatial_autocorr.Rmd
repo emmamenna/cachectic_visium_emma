@@ -1,0 +1,115 @@
+---
+title: "spatial_autocorr"
+output: html_document
+date: "2025-10-28"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+suppressPackageStartupMessages({
+  library(SpatialFeatureExperiment)
+  library(SFEData)
+  library(scater)
+})
+library(ggplot2)
+library(RColorBrewer)
+library(ExperimentHub)
+library(SpatialExperiment)
+library(spdep)
+```
+
+#Moran's I, global and bivariate
+```{r}
+
+load("~/subset_list.RData")
+
+features <- c("Cdkn1a", "Cdkn2a", "Trp53", "Myog", "Myf5")
+
+results_list <- lapply(names(subset_list), function(sample_name) {
+  spe <- subset_list[[sample_name]]
+  message("Processing sample: ", sample_name)
+  
+  sfe <- SpatialFeatureExperiment(
+    assays = assays(spe),
+    colData = colData(spe),
+    spatialCoords = spatialCoords(spe)
+  )
+  
+  # prova a costruire il grafo con protezione dagli errori
+  g <- tryCatch({
+    findVisiumGraph(sfe, zero.policy = TRUE)
+  }, error = function(e) {
+    message("⚠️  Skipping sample '", sample_name, "' due to error: ", e$message)
+    return(NULL)
+  })
+  
+  if (is.null(g)) return(NULL)
+  
+  # controlla punti isolati
+  isolated <- which(card(g$neighbours) == 0)
+  
+  if (length(isolated) > 0) {
+    message("   → Found ", length(isolated), " isolated spots. Removing them...")
+    sfe <- sfe[, -isolated]
+    
+    g <- tryCatch({
+      findVisiumGraph(sfe, zero.policy = TRUE)
+    }, error = function(e) {
+      message("   ⚠️  Sample '", sample_name, "' still problematic after removal. Skipping.")
+      return(NULL)
+    })
+  }
+  
+  if (is.null(g)) return(NULL)
+  
+  colGraph(sfe, "visium") <- g
+  message("✅  Sample '", sample_name, "' processed successfully with ", ncol(sfe), " spots.")
+  
+  # --- Calcolo del Moran's I bivariato per i geni ---
+  moran_values <- numeric(length(features))
+  names(moran_values) <- features
+  
+  for (i in seq_along(features)) {
+    gene <- features[i]
+    
+    mor <- tryCatch({
+      moran_bv(
+        x = logcounts(sfe)["Pax7", ],
+        y = logcounts(sfe)[gene, ],
+        listw = g,
+        nsim = 499,
+        scale = TRUE
+      )
+    }, error = function(e) {
+      message("   ⚠️  Moran failed for gene ", gene, ": ", e$message)
+      return(NULL)
+    })
+    
+    moran_values[i] <- if (!is.null(mor)) mor$t0 else NA
+  }
+  
+  # ritorna solo i valori del Moran
+  return(data.frame(
+    sample = sample_name,
+    gene = features,
+    moran = moran_values
+  ))
+})
+
+
+results_list <- Filter(Negate(is.null), results_list)
+moran_results <- do.call(rbind, results_list)
+moran_results
+```
+
+#DISCORSO PATHWAY
+#però non posso mettermi a calcolare la correlazione spaziale tra 500 coppie di L/R...
+
+
+
+
+
+

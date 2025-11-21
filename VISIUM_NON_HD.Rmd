@@ -63,19 +63,6 @@ run_my_rctd <- function(spe, sce_ref, out_prefix) {
   ws <- data.frame(t(as.matrix(ws)))
   colData(spe)[names(ws)] <- ws[colnames(spe), ] #salvo tutti i pesi in spe
   
-  #Rappresentazione di tutti i tipi cellulari
-  p <- lapply(names(ws), \(.) 
-    plotCoords(spe, annotate = ., point_size = 0.1)
-  ) |>
-    wrap_plots(nrow = 3, ncol=5, guides = "collect") & 
-    theme(
-      legend.key.width = unit(0.5, "lines"),
-      legend.key.height = unit(1, "lines"),
-      strip.text = element_text(size = 5) 
-    ) & 
-    scale_color_gradientn(colors = rev(hcl.colors(9, "Rocket")))
-  ggsave(paste0(out_prefix, "_types.png"), p, width = 10, height = 8, dpi = 300)
-  
   # Assegna cluster
   ids <- names(ws)[apply(ws, 1, which.max)]
   ids <- gsub("\\.([A-z])", " \\1", ids)
@@ -130,6 +117,34 @@ for (name in names(visium_list)) {
 
 save(visium_list,file="visium_list.RData")
 
+```
+
+#Grafico per tipi
+```{r}
+
+for (spe_name in names(visium_list)) {
+  spe <- visium_list[[spe_name]]
+  spatialCoords(spe) <- spatialCoords(spe)[, c(2, 1)]
+  ws <- colData(spe)[,seq(8,22,1)]
+  p <- lapply(names(ws), function(nm) {
+  plotCoords(spe, annotate = nm, point_size = 0.1) +
+    scale_color_gradientn(
+      colors = rev(hcl.colors(9, "Rocket")),
+      limits = c(0, 1)  # fissa scala da 0 a 1
+    ) +
+    ggtitle(nm)
+  })
+
+  final_plot <- wrap_plots(p, nrow = 3, ncol = 5, guides = "collect") &
+  theme(
+    legend.key.width = unit(0.5, "lines"),
+    legend.key.height = unit(1, "lines"),
+    strip.text = element_text(size = 5)
+  ) &
+  scale_color_gradientn(colors = rev(hcl.colors(9, "Rocket")), limits = c(0, 1))
+
+  ggsave(paste0(spe_name, "_types.png"), final_plot, width = 10, height = 8, dpi = 300)
+} 
 ```
 
 Posso fare un confronto proporzioni (non spaziale)

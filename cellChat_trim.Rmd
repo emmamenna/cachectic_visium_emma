@@ -1,7 +1,7 @@
 ---
-title: "cell_communication"
+title: "cell_chat_trim"
 output: html_document
-date: "2025-09-10"
+date: "2025-11-21"
 ---
 
 ```{r setup, include=FALSE}
@@ -42,55 +42,54 @@ library(SeuratDisk)
 library(SpaNorm)
 ```
 
-#Dataset preparation:
-Firstly, genes are filtered in order to keep only genes expressed in at least 1% of the spots 
-(the threshold is so low because of the huge amount of genes that have poor detection in the samples, so being conservative seems like the best option).
-Secondly, spots that have zero counts or that were identified by deconvolution as NAs (excpet for block 7 -
-which we are not considering anymore in the analysis - these correspond to external connective tissue)
-are removed. 
-Lastly, a normalization accounting for spatial information (spaNorm) is applied.
-```{r}
-load("~/subset_list.RData")
-
-#removing block 7
-subset_list <- subset_list[!names(subset_list) %in% c("c26STAT3_b7","sham_b7","c26_b7")]
-cellchat_list <- list()
-
-#spots filtering
-subset_list <- lapply(subset_list, function(spe) {
-   keep <- !is.na(spe$cell_type) & colSums(counts(spe)) > 0
-   spe[,keep]
-})
-
-#genes filtering
- subset_list <- lapply(subset_list, function(spe) {
-   keep <- filterGenes(spe, prop = 0.01)
-   print(table(keep)) 
-   spe[keep, ]
-})
- 
-save(subset_list, file = "subset_list_filtered.RData")
-
-#Spatial normalization
-subset_list <- lapply(subset_list, function(spe) {
-  set.seed(92)
-  spe <- SpaNorm(spe, sample.p = 0.10, maxn.psi = 200, maxit.nb=15, maxit.psi = 5, df.tps = 3)
-})
-
-save(subset_list, file="~/subset_list_spanorm.RData")
-
-```
-
-#Cell chat separately per sample.
-CellChat identifies over-expressed ligands and receptors for each cell type as well as over-expressed ligand-receptor interactions. After that, it associates a probability to these interactions,
-which is based on the mean expressions of the ligand and receptor (in their cell types).
-Significant interactions are identified according to a permutation test on cell type labels.
-Then probabilities refering to ligand-receptor couples belonging to the same biological pathway are merged to detect the strength of the pathway in the tissue and which cell types it involves.
-
-The new version of cell chat allows the use of spatial information: the probability of an interaction
-is inversely proportional to their distance. In addition, it allows to look for contact dependent interactions.
+#approccio1: prendo gli spot dei trim e gli spot adiacenti ai trim
+#(secondo me questa cosa a maggior ragione andrebbe fatta sui nuclei però)
 ```{r}
 load("~/subset_list_spanorm.RData")
+
+subset_list <- lapply(subset_list, function(spe) {
+
+  # Distanze tra tutti gli spot
+  cell_dist <- computeCellDistance(
+    coordinates = spatialCoords(spe),
+    ratio = 0.316,
+    tol = 4
+  )
+  cell_dist <- as.matrix(cell_dist)
+
+  # Identifica righe corrispondenti ai nuclei Trim63
+  trim_idx <- which(spe$cell_type == "Myonuclei_Trim63")
+
+  # Se non ci sono trim → ritorna spe senza filtri
+  if (length(trim_idx) == 0) {
+    warning("Nessuno spot Trim63 in questo spe.")
+    return(spe)
+  }
+
+  # Distanze: righe = Trim, colonne = tutti gli spot
+  trim_dist <- cell_dist[trim_idx, , drop = FALSE]
+
+  # Uno spot è "vicino a trim" se almeno un trim dista < 30
+  trim_neigh <- apply(trim_dist, 2, function(x) any(x < 30))
+  print(prop.table(table(trim_neigh)))
+
+  # Mantieni solo spot vicini ai trim
+  spe <- spe[, trim_neigh]
+
+  return(spe)
+})
+
+#proporzioni molto variabili come prevedibile a seconda della condizione
+#direi che intanto guardo ai c26
+
+subset_list$c26_b2
+subset_list$c26_b4
+subset_list$c26_b6
+
+c26_list <- subset_list[names(subset_list) %in% c("c26_b2","c26_b4","c26_b6")]
+
+```
+```{r}
 
 #spatial information
 spatial.factors <- data.frame(
@@ -98,9 +97,9 @@ spatial.factors <- data.frame(
   tol   = 4    # half the dimension of bins in micron
 )
 
-#NON contact dependent
+#Uso il codice non contact dependent ma di fatto lo è perché ho già filtrato
 set.seed(1733)
-cellchat_list <- lapply(subset_list, function(spx) {
+cellchat_list <- lapply(c26_list, function(spx) {
   sce <- as(spx, "SingleCellExperiment")
   chat <- createCellChat(object = sce,
                          datatype = "spatial",
@@ -123,32 +122,6 @@ cellchat_list <- lapply(subset_list, function(spx) {
   chat
 })
 
-#CONTACT DEPENDENT 
-set.seed(1733)
-cellchat_list <- lapply(subset_list, function(spx) {
-  sce <- as(spx, "SingleCellExperiment")
-  chat <- createCellChat(object = sce,
-                         datatype = "spatial",
-                         group.by = "cell_type",
-                         coordinates = spatialCoords(spx),
-                         assay ="logcounts",
-                         spatial.factors = spatial.factors)
-  chat@DB <- CellChatDB.mouse
-  # chat@DB.use <-subsetDB(chat@DB,search="Secreted Signaling")
-  chat <- subsetData(chat)
-  chat <- identifyOverExpressedGenes(chat)
-  chat <- identifyOverExpressedInteractions(chat)
-  chat <- computeCommunProb(chat, type = "triMean",
-                            distance.use = TRUE,
-                            scale.distance = 0.1,
-                            k.min = 10, #min. interacting cell pairs for 2 groups to be defined close (default)
-                            contact.dependent = TRUE,
-                            contact.range = 30)
-  chat <- computeCommunProbPathway(chat)
-  chat <- aggregateNet(chat)
-  chat
-})
-
 results <- lapply(cellchat_list, function(x){
   tryCatch({
     df.net <- subsetCommunication(x, slot.name = "netP")
@@ -165,9 +138,14 @@ results
 
 ```
 
+#approccio2: seleziono solo i tipi cellulari che sono a distanza ravvicinata coi trim
+#basandomi sulle tabelle di frequenza
+```{r}
+
+```
+
 #Visualization -> plots are saved in a pdf file for each sample
 ```{r}
-subset_list <- subset_list[!names(subset_list) =="sham_b6"]
 
 # Loop sui campioni
 invisible(lapply(names(cellchat_list), function(sample_name) {
@@ -261,3 +239,5 @@ invisible(lapply(names(cellchat_list), function(sample_name) {
 }))
 
 ```
+
+

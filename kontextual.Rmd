@@ -27,7 +27,7 @@ library(treekoR)
 #qui prendo l'insieme totale dei mionuclei come contesto
 ```{r}
 
-default_color <- "white"
+default_color <- "grey"
 
 your_color_vector <- setNames(
   rep(default_color, 16),
@@ -38,12 +38,10 @@ your_color_vector <- setNames(
     "Myonuclei_IIb", "Myonuclei_Trim63")
 )
 
-your_color_vector["Myonuclei_IIb"]     <- "green"
-your_color_vector["Myonuclei_Trim63"]  <- "black"
-your_color_vector[c("Myonuclei_IIx", "Myonuclei_IIx_IIa", "Myonuclei_IIx_IIb",
-                    "Myonuclei_MTJ", "Myonuclei_NMJ")]  <- "grey"
-
-#POTREBBE AVERE UN SENSO!!!
+your_color_vector["Myonuclei_IIb"]     <- "lightgrey"
+your_color_vector["Myonuclei_Trim63"]  <- "red"
+# your_color_vector[c("Myonuclei_IIx", "Myonuclei_IIx_IIa", "Myonuclei_IIx_IIb",
+#                     "Myonuclei_MTJ", "Myonuclei_NMJ")]  <- "white"
 
 plot_list <- lapply(names(subset_list), function(nm) {
   spe <- subset_list[[nm]]
@@ -59,6 +57,17 @@ plot_list <- lapply(names(subset_list), function(nm) {
 })
 
 plot_list
+
+dir.create("plots", showWarnings = FALSE)
+for (i in seq_along(plot_list)) {
+  nm <- names(plot_list)[i]
+  ggsave(
+    filename = paste0("plots/", i, ".png"),
+    plot = plot_list[[i]],
+    width = 6, height = 5, dpi = 300
+  )
+}
+
 
 
 ```

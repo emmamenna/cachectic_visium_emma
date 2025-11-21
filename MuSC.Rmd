@@ -1,0 +1,165 @@
+---
+title: "MuSC"
+output: html_document
+date: "2025-11-11"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(arrow)
+library(Banksy)
+library(BiocParallel)
+library(DropletUtils)
+library(dplyr)
+library(edgeR)
+library(ggplot2)
+library(graphics)
+library(igraph)
+library(jsonlite)
+library(Matrix)
+library(matrixStats)
+library(OSTA.data)
+library(patchwork)
+library(pheatmap)
+library(S4Vectors)
+library(scDblFinder)
+library(scater)
+library(scran)
+library(scuttle)
+library(SingleCellExperiment)
+library(SpatialExperiment)
+library(SummarizedExperiment)
+library(tidyr)
+library(VisiumIO)
+library(spacexr)
+library(SpotSweeper)
+library(ggspavis)
+library(openxlsx)
+library(zip)
+library(clusterProfiler)
+library(org.Mm.eg.db)
+```
+
+```{r}
+load("~/combined_spe_wob7.RData")
+sce_c26 <- combined_spe_wob7[,combined_spe_wob7$tissue_type == "c26"]
+sce_sham <- combined_spe_wob7[,combined_spe_wob7$tissue_type == "sham"]
+
+#seleziono solo gli spot MuSC 
+musc_c26 <- sce_c26[,sce_c26$cell_type == "MuSC" & !is.na(sce_c26$cell_type)]
+musc_sham <- sce_sham[,sce_sham$cell_type == "MuSC" & !is.na(sce_sham$cell_type)]
+
+#estraggo i geni espressi
+geni_musc_c26 <- rownames(counts(musc_c26))[rowSums(counts(musc_c26)) > 0]
+length(geni_musc_c26) #5214
+geni_musc_sham <- rownames(counts(musc_sham))[rowSums(counts(musc_sham))>0]
+length(geni_musc_sham) #6798
+
+common_genes <- geni_musc_c26[geni_musc_c26 %in% geni_musc_sham]
+length(common_genes) #4033
+sham_only <- geni_musc_sham[!geni_musc_sham %in% geni_musc_c26]
+length(sham_only) #2765
+c26_only <- geni_musc_c26[!geni_musc_c26 %in% geni_musc_sham]
+length(c26_only) #1181
+
+#vediamo quelli espressi tanto -----------------------------------------------------------------------------
+#431 geni espressi nei MuSC di ogni campione
+#ho provato anche a vedere se ci sono geni espressi in tutti i MuSC ma no
+musc_c26_top <- rownames(counts(musc_c26))[rowSums(counts(musc_c26)[,musc_c26$sample_id == "c26_b2"]) > 0 &
+                                            rowSums(counts(musc_c26)[,musc_c26$sample_id == "c26_b4"]) > 0 &
+                                            rowSums(counts(musc_c26)[,musc_c26$sample_id == "c26_b6"]) > 0]
+length(musc_c26_top) #431
+
+musc_sham_top <- rownames(counts(musc_sham))[rowSums(counts(musc_sham)[,musc_sham$sample_id == "sham_b1"]) > 0 &
+                                            rowSums(counts(musc_sham)[,musc_sham$sample_id == "sham_b3"]) > 0 &
+                                            rowSums(counts(musc_sham)[,musc_sham$sample_id == "sham_b6"]) > 0]
+length(musc_sham_top) #997
+
+top_common_genes <- musc_c26_top[musc_c26_top %in% musc_sham_top]
+length(top_common_genes) #431
+only_sham_genes <- musc_sham_top[!musc_sham_top %in% musc_c26_top]
+length(only_sham_genes) #739
+
+only_sham_genes <- musc_sham_top[!musc_sham_top %in% musc_c26_top]
+
+#Se no prendo gli HVG ?
+
+```
+
+```{r}
+#stampo geni in comune
+library(writexl)
+
+writexl::write_xlsx(
+  list(
+    common = data.frame(genes = common_genes),
+    sham_only = data.frame(genes = sham_only),
+    c26_only = data.frame(genes = c26_only)
+  ),
+  "MuSC_genes.xlsx"
+)
+
+```
+
+#GSE
+NB: non posso fare una GSEA perché non ho le statistiche test non essendo geni DE
+```{r}
+#geni espressi almeno in uno spot MuSC sham e almeno in uno spot MuSC c26
+head(common_genes)
+map_df <- bitr(common_genes, fromType='SYMBOL', toType = 'ENTREZID', OrgDb = org.Mm.eg.db)
+cg_entrezid <- map_df$ENTREZID
+cg_path <- enrichKEGG(gene = cg_entrezid, organism = 'mmu', pvalueCutoff = 0.05)
+cg_path@result
+cg_sig <- cg_path@result[cg_path@result$p.adjust < 0.01, ]
+cg_sig
+
+#geni espressi almeno in uno spot MuSC sham ma in nessuno spot c26 -----------------------------------------
+head(sham_only)
+
+map_df <- bitr(sham_only, fromType='SYMBOL', toType = 'ENTREZID', OrgDb = org.Mm.eg.db)
+sham_entrezid <- map_df$ENTREZID
+top_sham_path <- enrichKEGG(gene = sham_entrezid, organism = 'mmu', pvalueCutoff = 0.05)
+top_sham_path@result
+top_sham_sig <- top_sham_path@result[top_sham_path@result$p.adjust < 0.01, ]
+top_sham_sig 
+
+#geni espressi almeno in uno spot MuSC c26 ma in nessuno spot sham -----------------------------------------
+head(c26_only)
+
+map_df <- bitr(c26_only, fromType='SYMBOL', toType = 'ENTREZID', OrgDb = org.Mm.eg.db)
+c26_entrezid <- map_df$ENTREZID
+top_c26_path <- enrichKEGG(gene = c26_entrezid, organism = 'mmu', pvalueCutoff = 0.05)
+top_c26_path@result
+top_c26_sig <- top_c26_path@result[top_c26_path@result$p.adjust < 0.01, ]
+top_c26_sig #niente
+
+#top genes ------------------------------------------------------------------------------------
+head(top_common_genes)
+map_df <- bitr(top_common_genes, fromType='SYMBOL', toType = 'ENTREZID', OrgDb = org.Mm.eg.db)
+cg_entrezid <- map_df$ENTREZID
+top_cg_path <- enrichKEGG(gene = cg_entrezid, organism = 'mmu', pvalueCutoff = 0.05)
+top_cg_path@result
+top_cg_sig <- top_cg_path@result[top_cg_path@result$p.adjust < 0.01, ]
+top_cg_sig #22
+
+```
+
+```{r}
+df1 <- as.data.frame(cg_sig)
+df2 <- as.data.frame(top_sham_sig)
+df3 <- as.data.frame(top_cg_sig)
+wb <- createWorkbook()
+addWorksheet(wb, "GSEA_MuSC_common_genes")
+addWorksheet(wb, "GSEA_MuSC_SHAM_genes")
+addWorksheet(wb, "GSEA_MuSC_TOPcommon_genes")
+writeData(wb, sheet = "GSEA_MuSC_common_genes", x = df1, rowNames = TRUE)
+writeData(wb, sheet = "GSEA_MuSC_SHAM_genes", x = df2, rowNames = TRUE)
+writeData(wb, sheet = "GSEA_MuSC_TOPcommon_genes", x = df3, rowNames = TRUE)
+saveWorkbook(wb, file = "GSEA_MuSC.xlsx", overwrite = TRUE)
+```
+
+
+

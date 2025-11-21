@@ -181,10 +181,10 @@ load("~/combined_spe_wob7.RData")
 sce_c26 <- combined_spe_wob7[,combined_spe_wob7$tissue_type == "c26"]
 sce_sham <- combined_spe_wob7[,combined_spe_wob7$tissue_type == "sham"]
 
+#c26 ----------------------------------------------------------------------------------------------------
 expr_pax7 <- as.vector(counts(sce_c26[rownames(sce_c26) == "Pax7",]))
-table(expr_pax7>0) #è pochissimo espresso
+table(expr_pax7>0)
 summary(expr_pax7)
-
 expr_Cdkn1a <- as.vector(counts(sce_c26[rownames(sce_c26) == "Cdkn1a",]))
 expr_Cdkn2a <- as.vector(counts(sce_c26[rownames(sce_c26) == "Cdkn2a",]))
 expr_Trp53 <- as.vector(counts(sce_c26[rownames(sce_c26) == "Trp53",]))
@@ -196,8 +196,21 @@ table(expr_pax7>0,expr_Trp53>0)
 table(expr_pax7>0,expr_Myog>0)
 table(expr_pax7>0,expr_Myf5>0)
 
-#CORRELAZIONI 
-#C26
+#Concordanza -> k di cohen
+library(psych)
+t <- table(expr_pax7>0,expr_Cdkn1a>0)
+cohen.kappa(t,n.obs=42537)
+t <- table(expr_pax7>0,expr_Cdkn2a>0)
+cohen.kappa(t,n.obs=42537)
+t <- table(expr_pax7>0,expr_Trp53>0)
+cohen.kappa(t,n.obs=42537)
+t <- table(expr_pax7>0,expr_Myog>0)
+cohen.kappa(t,n.obs=42537)
+t <- table(expr_pax7>0,expr_Myf5>0)
+cohen.kappa(t,n.obs=42537)
+#sono tutte nulle
+
+#Correlazioni
 mat <- counts(sce_c26[rownames(sce_c26) %in% c("Pax7","Cdkn1a","Cdkn2a","Trp53","Myog","Myf5"),])
 cor_mat <- cor(t(as.matrix(mat)),method="spearman")
 cor_mat 
@@ -208,11 +221,51 @@ markers <- c("Pax7","Cdkn1a","Cdkn2a","Trp53","Myog","Myf5")
 results <- data.frame()
 #non riesce neanche a fare un test perché ci sono troppe poche oss / valori troppo simili
 
-#SHAM
+#SHAM -----------------------------------------------------------------------------------------------------
+
+#definisco la popolazione dei MuSC
+musc_sham <- sce_sham[,sce_sham$cell_type == "MuSC" & !is.na(sce_sham$cell_type)]
+dim(musc_sham)
+musc_sham[rowSums(counts(musc_sham))>0,]
+dim(musc_sham) #6798 geni espessi in almeno uno spot MuSC sham
+
+expr_pax7 <- as.vector(counts(sce_sham[rownames(sce_sham) == "Pax7",]))
+table(expr_pax7>0)
+summary(expr_pax7)
+expr_Cdkn1a <- as.vector(counts(sce_sham[rownames(sce_sham) == "Cdkn1a",]))
+expr_Cdkn2a <- as.vector(counts(sce_sham[rownames(sce_sham) == "Cdkn2a",]))
+expr_Trp53 <- as.vector(counts(sce_sham[rownames(sce_sham) == "Trp53",]))
+expr_Myog <- as.vector(counts(sce_sham[rownames(sce_sham) == "Myog",]))
+expr_Myf5 <- as.vector(counts(sce_sham[rownames(sce_sham) == "Myf5",]))
+table(expr_pax7>0,expr_Cdkn1a>0) #solo questo sembra particolarmente correlato, ma sono numeri piccoli
+table(expr_pax7>0,expr_Cdkn2a>0)
+table(expr_pax7>0,expr_Trp53>0)
+table(expr_pax7>0,expr_Myog>0)
+table(expr_pax7>0,expr_Myf5>0)
+
+#Concordanza -> k di cohen
+t <- table(expr_pax7>0,expr_Cdkn1a>0)
+cohen.kappa(t,n.obs=55171)
+t <- table(expr_pax7>0,expr_Cdkn2a>0)
+cohen.kappa(t,n.obs=55171)
+t <- table(expr_pax7>0,expr_Trp53>0)
+cohen.kappa(t,n.obs=55171)
+t <- table(expr_pax7>0,expr_Myog>0)
+cohen.kappa(t,n.obs=55171)
+t <- table(expr_pax7>0,expr_Myf5>0)
+cohen.kappa(t,n.obs=55171)
+#sono tutte molto basse
+
+#Correlazioni
 mat <- counts(sce_sham[rownames(sce_sham) %in% c("Pax7","Cdkn1a","Cdkn2a","Trp53","Myog","Myf5"),])
-cor_mat <- cor(t(as.matrix(mat)))
+cor_mat <- cor(t(as.matrix(mat)),method="spearman")
 cor_mat 
 pheatmap::pheatmap(cor_mat)
+genes <- colnames(mat)
+results <- data.frame()
+markers <- c("Pax7","Cdkn1a","Cdkn2a","Trp53","Myog","Myf5")
+results <- data.frame()
+
 
 ```
 

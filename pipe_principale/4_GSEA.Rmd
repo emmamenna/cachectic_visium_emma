@@ -158,17 +158,17 @@ sig <- top[top$significant, ]
 sig_up <- sig[sig$logFC >= 0, ]
 sig_down <- sig[sig$logFC < 0, ]
   
-# wb <- createWorkbook()
-# addWorksheet(wb, "Tutti_geni")
-# writeData(wb, "Tutti_geni", sig, rowNames = TRUE)
-# addWorksheet(wb, "Significativi")
-# writeData(wb, "Significativi", sig, rowNames = TRUE)
-# addWorksheet(wb, "Upregolati")
-# writeData(wb, "Upregolati", sig_up, rowNames = TRUE)
-# addWorksheet(wb, "Downregolati")
-# writeData(wb, "Downregolati", sig_down, rowNames = TRUE)
-# saveWorkbook(wb,"trimc26_overallsham.xlsx", overwrite = TRUE)
-#   
+wb <- createWorkbook()
+addWorksheet(wb, "Tutti_geni")
+writeData(wb, "Tutti_geni", top, rowNames = TRUE)
+addWorksheet(wb, "Significativi")
+writeData(wb, "Significativi", sig, rowNames = TRUE)
+addWorksheet(wb, "Upregolati")
+writeData(wb, "Upregolati", sig_up, rowNames = TRUE)
+addWorksheet(wb, "Downregolati")
+writeData(wb, "Downregolati", sig_down, rowNames = TRUE)
+saveWorkbook(wb,"trimc26_overallsham.xlsx", overwrite = TRUE)
+
 gene_summary <- data.frame(
     Geni_considerati = nrow(top),
     Geni_significativi = nrow(sig),
@@ -229,7 +229,7 @@ saveWorkbook(wb, file = "gsea_trim_overall.xlsx", overwrite = TRUE)
 
 ```
 
-#4. TRIM VS 2B NEI C26
+#4. TRIM VS 2B NEI C26 --------------------------------------------------------------------------------
 Adding a sample-specific effect to account not for technical variability (that we never considered
 a real issue -> see pseudobulk pca) but to account for biological variability, as now we are 
 making a comparison WITHIN condition (so we cannot presume independency).
@@ -257,7 +257,7 @@ sig_down <- sig[sig$logFC < 0, ]
   
 wb <- createWorkbook()
 addWorksheet(wb, "Tutti_geni")
-writeData(wb, "Tutti_geni", sig, rowNames = TRUE)
+writeData(wb, "Tutti_geni", top, rowNames = TRUE)
 addWorksheet(wb, "Significativi")
 writeData(wb, "Significativi", sig, rowNames = TRUE)
 addWorksheet(wb, "Upregolati")

@@ -264,6 +264,31 @@ ggplot(prop_df_condition, aes(x = tissue_type, y = proportion, fill = cell_type)
 
 ggsave("cell_type_proportions_by_condition.png", width = 10, height = 6, dpi = 300)
 
+prop_df_condition <- purrr::imap_dfr(subset_list, function(spe, name) {
+  data.frame(
+    tissue_type = spe$tissue_type,
+    cell_type = spe$cell_type
+  ) |>
+    filter(!is.na(cell_type))
+}) |>
+  dplyr::count(tissue_type, cell_type) |>
+  group_by(tissue_type) |>
+  mutate(proportion = n / sum(n)) |>
+  ungroup()
+ggplot(prop_df_condition, aes(x = tissue_type, y = proportion, fill = cell_type)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = your_color_vector) +
+  scale_x_discrete(limits = sort(unique(prop_per_sample$tissue_type)))
+  theme_minimal() +
+  labs(
+    title = "Proporzioni dei tipi cellulari per condizione",
+    x = "Condizione (tissue_type)",
+    y = "Proporzione",
+    fill = "Tipo Cellulare"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+ggsave("cell_type_proportions_by_condition.png", width = 10, height = 6, dpi = 300)
+
 ```
 
 #Same barplot for multiome annotations for comparison
@@ -350,34 +375,26 @@ write_xlsx(props_wide, path = "celltype_by_tissue_type.xlsx")
 
 #boxplot of cell type proportions stratified by condition
 ```{r}
-prop_per_sample <- lapply(names(list_wb7), function(sample_name) {
-  spe <- subset_list[[sample_name]]
-  df <- data.frame(
-    sample = sample_name,
-    tissue_type = unique(spe$tissue_type),
-    cell_type = spe$cell_type
-  )
-  
-  df <- df %>%
-    group_by(cell_type) %>%
-    summarise(count = n(), .groups = "drop") %>%
-    mutate(proportion = count / sum(count),
-           sample = sample_name,
-           tissue_type = unique(spe$tissue_type))
-  
-  df
-}) %>% bind_rows()
-
+prop_per_sample <- purrr::imap_dfr(subset_list, function(spe, name) {
+  cd <- as.data.frame(SummarizedExperiment::colData(spe))
+  cd |>
+    filter(!is.na(cell_type)) |>
+    dplyr::count(cell_type, name = "count") |>
+    mutate(proportion  = count / sum(count),
+           sample      = name,
+           tissue_type = paste(unique(as.character(cd$tissue_type)), collapse = ", ")) |>
+    dplyr::rename(cell_type = cell_type)
+})
 ggplot(prop_per_sample, aes(x = tissue_type, y = proportion, fill = tissue_type)) +
   geom_boxplot(outlier.shape = 21) +
   facet_wrap(~ cell_type, scales = "free_y") +
-  scale_fill_manual(values = c("sham" = "#1b9e77", "c26" = "#d95f02")) +
+  scale_fill_manual(values = c("sham" = "#1B9E77", "c26" = "#D95F02")) +
   theme_minimal(base_size = 12) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
   labs(title = "Distribuzione proporzioni cell_type per tissue_type",
        x = "Tissue type",
        y = "Proporzione")
-ggsave("boxplot_celltype_prop_by_cond.png", width = 10, height = 6, dpi = 300)
+ggsave("boxplot_cell_types.png", width = 10, height = 6, dpi = 300)
 
 ```
 
@@ -482,8 +499,6 @@ x <- as.factor(x)
 png("boxplot.png", width = 800, height = 600, res = 120)
 boxplot(y ~ x)
 ```
-
-
 
 
 

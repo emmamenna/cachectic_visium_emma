@@ -393,7 +393,8 @@ ggsave("barplot_Nspot_geni_campione.png")
 
 #Differentially Expressed Genes analysis
 ```{r}
-
+pb_wb7 <-  readRDS("~/pb_wb7.rds")
+pb <- aggregateAcrossCells(pb_wb7, ids=pb_wb7$sample_id)
 y <- DGEList(counts(pb), samples = colData(pb))
 
 #filtering genes observed in less than 10% of spots
@@ -403,21 +404,21 @@ y <- y[rowSums(y$counts > 0) >= min_samples, ]
 #TMM normalization
 y <- calcNormFactors(y)
 
-design <- model.matrix(~ sampletype, data = y$samples)
+design <- model.matrix(~ tissue_type, data = y$samples)
 y <- estimateDisp(y, design)
 fit <- glmFit(y, design)
 
 #Defining contrasts of interest:
 contrast_list <- list(
-    "C26_vs_SHAM" = makeContrasts(sampletypec26 - sampletypesham, levels = make.names(colnames(design))),
-    "FOXO_vs_C26" = makeContrasts(-sampletypec26, levels = make.names(colnames(design))),
-    "FOXO_vs_SHAM" = makeContrasts(-sampletypesham - sampletypesham, levels = make.names(colnames(design))),
-    "STAT3_vs_C26" = makeContrasts(sampletypec26STAT3 - sampletypec26, levels = make.names(colnames(design))),
-    "STAT3_vs_SHAM" = makeContrasts(sampletypec26STAT3 - sampletypesham, levels = make.names(colnames(design))),
-    "MURF1_vs_C26" = makeContrasts(sampletypec26murf1 - sampletypec26, levels = make.names(colnames(design))),
-    "MURF1_vs_SHAM" = makeContrasts(sampletypec26murf1 - sampletypesham, levels = make.names(colnames(design))),
-    "SMAD23_vs_C26" = makeContrasts(sampletypec26SMAD23 - sampletypec26, levels = make.names(colnames(design))),
-    "SMAD23_vs_SHAM" = makeContrasts(sampletypec26SMAD23 - sampletypesham, levels = make.names(colnames(design)))
+    "C26_vs_SHAM" = makeContrasts(tissue_typec26 - tissue_typesham, levels = make.names(colnames(design))),
+    "FOXO_vs_C26" = makeContrasts(-tissue_typec26, levels = make.names(colnames(design))),
+    "FOXO_vs_SHAM" = makeContrasts(-tissue_typesham - tissue_typesham, levels = make.names(colnames(design))),
+    "STAT3_vs_C26" = makeContrasts(tissue_typec26STAT3 - tissue_typec26, levels = make.names(colnames(design))),
+    "STAT3_vs_SHAM" = makeContrasts(tissue_typec26STAT3 - tissue_typesham, levels = make.names(colnames(design))),
+    "MURF1_vs_C26" = makeContrasts(tissue_typec26murf1 - tissue_typec26, levels = make.names(colnames(design))),
+    "MURF1_vs_SHAM" = makeContrasts(tissue_typec26murf1 - tissue_typesham, levels = make.names(colnames(design))),
+    "SMAD23_vs_C26" = makeContrasts(tissue_typec26SMAD23 - tissue_typec26, levels = make.names(colnames(design))),
+    "SMAD23_vs_SHAM" = makeContrasts(tissue_typec26SMAD23 - tissue_typesham, levels = make.names(colnames(design)))
   )
 
 lrt1 <- glmLRT(fit, contrast = contrast_list$FOXO_vs_C26)

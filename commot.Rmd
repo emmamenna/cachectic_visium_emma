@@ -27,63 +27,34 @@ library(BiocParallel)
 # set to accept terms of service
 Sys.setenv(CONDA_PLUGINS_AUTO_ACCEPT_TOS = "yes")
 Sys.setenv(CI = "true")
-#if (is.null(miniconda_path())) {
+if (is.null(miniconda_path())) {
 install_miniconda()
-#}
+}
 
 # create environment
 env <- "img-ccc"
-#if (!(env %in% conda_list()$name)) {
+if (!(env %in% conda_list()$name)) {
 conda_create(env, packages = "python=3.11")
-#}
+}
 use_condaenv(env, required = TRUE)
 
 # install Python packages from conda-forge
 # these are dependency packages for commot that need to be installed from conda-forge (not PyPI)
 conda_install(
   envname = env, 
-  packages = c("libcxx", "llvm-openmp", "llvmlite", "numba"), 
+  packages = c("libcxx", "llvm-openmp", "llvmlite==0.41.1", "numba==0.58.1"), 
   channel = "conda-forge"
 )
 # install Python packages from PyPI
 # commot is available from PyPI
 conda_install(
   envname = env, 
-  packages = c("commot==0.0.3", "anndata==0.12.2", "pandas==2.3.2"), 
+  packages = c("commot==0.0.3", "anndata==0.8.0", "pandas==2.3.2"), 
   pip = TRUE
 )
 
 # run {python} chunks via reticulate
 knitr::opts_chunk$set(python.reticulate = TRUE)
-
-#----- problemi di incompatibilità versioni pacchetti ------------------------------
-# Creiamo un nuovo ambiente pulito
-reticulate::conda_create("commot-env", python_version = "3.11")  # o usa v3.10 se preferisci
-
-# Installiamo commot e le versioni compatibili di anndata
-reticulate::conda_install(
-  envname = "commot-env",
-  packages = c(
-    "pip",
-    "numpy",
-    "scipy",
-    "pandas",
-    "anndata==0.9.1"   # versione compatibile con commot
-  ),
-  pip = TRUE
-)
-
-# Installa commot via pip
-reticulate::py_install("commot", envname = "commot-env", pip = TRUE)
-
-library(reticulate)
-
-# punta all'ambiente appena creato
-reticulate::use_condaenv("commot-env", required = TRUE)
-
-# importa commot
-commot <- import("commot")
-
 
 ```
 
@@ -93,6 +64,7 @@ commot <- import("commot")
 ad <- import("anndata")
 pd <- import("pandas")
 ct <- import("commot")
+#ANDATOOOO
 
 # retrieve L-R interactions from CellChatDB and filter for those that are 
 # fully covered by the 1k-plex CosMx panel
@@ -100,6 +72,9 @@ db <- ct$pp$ligand_receptor_database(database = "CellChat", species = "mouse")
 names(db) <- c("ligand", "receptor", "pathway", "type")
 nrow(db)
 
+#DEFINIRE OGGETTO SPE
+load("~/subset_list_spanorm.RData")
+spe <- subset_list$c26STAT3_b1
 db <- db[apply(db, 1, \(.) {
   rs <- strsplit(.["receptor"], "_")
   lr <- c(.["ligand"], unlist(rs))
@@ -111,8 +86,8 @@ nrow(db)
 rs <- sapply(strsplit(db$receptor, "_"), .subset, 1)
 nrow(spe <- spe[unique(c(db$ligand, rs)), ])
 
-is <- split(colnames(spe), spe$fov)
-sr <- bplapply(is, BPPARAM = bp, \(.) {
+is <- split(colnames(spe), spe$cell_type)
+sr <- bplapply(is, \(.) {
   # skip FoV when there are too few cells
   if (length(.) < 100) return(NULL)
   ad <- SCE2AnnData(spe[, .], X_name = "logcounts")
@@ -131,8 +106,14 @@ sr <- bplapply(is, BPPARAM = bp, \(.) {
     ad$obsm["commot-CellChatDB-sum-sender"], 
     ad$obsm["commot-CellChatDB-sum-receiver"])
 })
+sr$Myonuclei_Trim63
+
+#vettore
+ct$tl$communication_direction(db, database_name="CellChatDB", pathway_name='VEGF', k=5)
+
+ct$pl$plot_cell_communication(db, database_name="CellChatDB", pathway_name='VEGF', plot_method='grid', background_legend=True, scale=0.00003, ndsize=8, grid_density=0.4, summary='sender', background='image', clustering='leiden', cmap='Alphabet',normalize_v = True, normalize_v_quantile=0.995)
+
 ```
 
-#VALERIO DICE DI USARE GLI ENVIRONMENT CHE CORREGGONO LORO LE VERSIONI
 
 
