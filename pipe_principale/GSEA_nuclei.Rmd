@@ -1,0 +1,175 @@
+---
+title: "GSEA_nuclei"
+output: html_document
+date: "2025-11-28"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(SingleCellExperiment)
+library(SummarizedExperiment)
+library(scuttle)
+library(edgeR)
+library(RUVSeq)
+library(scMerge)
+library(clusterProfiler)
+library(enrichplot)
+library(ggplot2)
+library(openxlsx)
+library(dplyr)
+library(stringr)
+library(AnnotationDbi)
+library(pathview)
+library(muscat)
+library(org.Mm.eg.db)
+library(SpatialExperiment)
+library(SpatialFeatureExperiment)
+library(purrr)
+```
+
+#DEG trim vs 2b
+```{r}
+pb_nuclei <- readRDS("~/per_git/pseudobulk_celltype_SingleR_wb7_wdiscard")
+
+pb_nuclei$group <- paste0(pb_nuclei$labels_singler, "_", pb_nuclei$tissue_type)
+pb_sub <- pb_nuclei[, pb_nuclei$group %in% c("Myonuclei_Trim63_c26", "Myonuclei_IIb_sham")]
+
+pb_sub$group <- factor(pb_sub$group, levels = c("Myonuclei_IIb_sham", "Myonuclei_Trim63_c26"))
+
+y <- DGEList(counts(pb_sub), samples = as.data.frame(colData(pb_sub)))
+keep <- filterByExpr(y, group = y$samples$group)
+y <- y[keep,, keep.lib.sizes=FALSE]
+y <- calcNormFactors(y)
+design <- model.matrix(~ group, data=y$samples)
+y <- estimateDisp(y, design)
+fit <- glmFit(y, design)
+lrt <- glmLRT(fit, coef = 2)
+top <- topTags(lrt, n = Inf)$table
+top$SYMBOL <- rownames(top)
+
+```
+
+#TRIM63+ C26 VS 2B SHAM
+```{r}
+se <- SummarizedExperiment(assays = list(counts = y$counts),
+                             colData = y$samples)
+assay(se, "norm") <- cpm(y, log = TRUE, prior.count = 1)
+se$GROUP <- ifelse(se$tissue_type == "c26", 1, 0)
+
+rowData(se)$PVAL     <- top$PValue[match(rownames(se), rownames(top))]
+rowData(se)$FC       <- top$logFC[match(rownames(se), rownames(top))]
+rowData(se)$ADJ.PVAL <- top$FDR[match(rownames(se), rownames(top))]
+rowData(se)$SYMBOL   <- top$SYMBOL[match(rownames(se), rownames(top))]
+
+geneList <- rowData(se)$FC; names(geneList) <- rowData(se)$SYMBOL
+geneList <- geneList[!is.na(geneList) & !is.na(names(geneList))]
+
+make_geneList_kegg <- function(logFC_named_by_SYMBOL) {
+  # SYMBOL -> ENTREZ
+  ids <- suppressMessages(
+    bitr(names(logFC_named_by_SYMBOL),
+         fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Mm.eg.db)
+  )
+  v <- logFC_named_by_SYMBOL[ids$SYMBOL]
+  names(v) <- ids$ENTREZID
+  v <- v[!is.na(v) & !is.na(names(v))]
+  sort(v, decreasing = TRUE)
+}
+
+geneList <- make_geneList_kegg(geneList)
+gsea_sig <- gseKEGG(geneList = geneList, organism = "mmu",
+            pvalueCutoff = 0.05, verbose = FALSE, nPermSimple = 10000)
+gsea_sig@result
+
+convert_core_enrichment <- function(entrez_string) {
+  entrez_ids <- strsplit(entrez_string, "/")[[1]]
+  symbols <- bitr(entrez_ids, fromType="ENTREZID", 
+                  toType="SYMBOL", OrgDb= org.Mm.eg.db)
+  paste(symbols$SYMBOL, collapse="/")
+}
+gsea_sig@result$core_enrichment_symbols <- 
+  sapply(gsea_sig@result$core_enrichment, convert_core_enrichment)
+
+res_df <- as.data.frame(gsea_sig@result)
+wb <- createWorkbook()
+addWorksheet(wb, "GSEA_Results")
+writeData(wb, sheet = "GSEA_Results", x = res_df, rowNames = TRUE)
+saveWorkbook(wb, file = "gsea_nuclei_trim_2b.xlsx", overwrite = TRUE)
+
+```
+
+#DEG trim vs overall
+```{r}
+pb_nuclei <- readRDS("~/per_git/pseudobulk_celltype_SingleR_wb7_wdiscard")
+pb_nuclei$group <- paste0(pb_nuclei$labels_singler, "_", pb_nuclei$tissue_type)
+mio_ov_sham <- unique(grep(paste0("^", "Myonuclei", ".*", "sham"), pb_nuclei$group, value = TRUE))
+pb_sub <- pb_nuclei[, pb_nuclei$group %in% c("Myonuclei_Trim63_c26", mio_ov_sham)]
+pb_sub$group[pb_sub$group %in% mio_ov_sham] <- "Myonuclei_sham"
+pb_sub$group <- as.factor(pb_sub$group)
+pb_comb <- aggregateData(pb_sub, assay = "counts", fun = "sum", by = "sample_id")
+colData(pb_comb)$group <- pb_sub$group[match(colnames(pb_comb), pb_sub$sample_id)]
+names(assays(pb_comb)) <- "counts"
+
+y <- DGEList(counts(pb_comb), samples = as.data.frame(colData(pb_comb)))
+keep <- filterByExpr(y, group = y$samples$group)
+y <- y[keep,, keep.lib.sizes=FALSE]
+y <- calcNormFactors(y)
+design <- model.matrix(~ group, data=y$samples)
+y <- estimateDisp(y, design)
+fit <- glmFit(y, design)
+lrt <- glmLRT(fit, coef = 2)
+top <- topTags(lrt, n = Inf)$table
+top$SYMBOL <- rownames(top)
+```
+
+#TRIM63+ C26 VS OVERALL SHAM
+```{r}
+se <- SummarizedExperiment(assays = list(counts = y$counts),
+                             colData = y$samples)
+assay(se, "norm") <- cpm(y, log = TRUE, prior.count = 1)
+se$GROUP <- ifelse(se$group == c("Myonuclei_Trim63_c26"), 1, 0)
+
+rowData(se)$PVAL     <- top$PValue[match(rownames(se), rownames(top))]
+rowData(se)$FC       <- top$logFC[match(rownames(se), rownames(top))]
+rowData(se)$ADJ.PVAL <- top$FDR[match(rownames(se), rownames(top))]
+rowData(se)$SYMBOL   <- top$SYMBOL[match(rownames(se), rownames(top))]
+
+geneList <- rowData(se)$FC; names(geneList) <- rowData(se)$SYMBOL
+geneList <- geneList[!is.na(geneList) & !is.na(names(geneList))]
+
+make_geneList_kegg <- function(logFC_named_by_SYMBOL) {
+  # SYMBOL -> ENTREZ
+  ids <- suppressMessages(
+    bitr(names(logFC_named_by_SYMBOL),
+         fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Mm.eg.db)
+  )
+  v <- logFC_named_by_SYMBOL[ids$SYMBOL]
+  names(v) <- ids$ENTREZID
+  v <- v[!is.na(v) & !is.na(names(v))]
+  sort(v, decreasing = TRUE)
+}
+
+geneList <- make_geneList_kegg(geneList)
+gsea_sig <- gseKEGG(geneList = geneList, organism = "mmu",
+            pvalueCutoff = 0.05, verbose = FALSE, nPermSimple = 10000)
+gsea_sig@result
+
+convert_core_enrichment <- function(entrez_string) {
+  entrez_ids <- strsplit(entrez_string, "/")[[1]]
+  symbols <- bitr(entrez_ids, fromType="ENTREZID", 
+                  toType="SYMBOL", OrgDb= org.Mm.eg.db)
+  paste(symbols$SYMBOL, collapse="/")
+}
+gsea_sig@result$core_enrichment_symbols <- 
+  sapply(gsea_sig@result$core_enrichment, convert_core_enrichment)
+
+res_df <- as.data.frame(gsea_sig@result)
+wb <- createWorkbook()
+addWorksheet(wb, "GSEA_Results")
+writeData(wb, sheet = "GSEA_Results", x = res_df, rowNames = TRUE)
+saveWorkbook(wb, file = "gsea_nuclei_trim_overall.xlsx", overwrite = TRUE)
+
+```

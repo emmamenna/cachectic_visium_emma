@@ -81,6 +81,7 @@ gene_summary <- data.frame(
 gene_summary
   
 ```
+
 #GSEA
 ```{r}
 se <- SummarizedExperiment(assays = list(counts = y$counts),

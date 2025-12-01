@@ -47,18 +47,17 @@ save(prot,file="proteomic_se.rds")
 
 #Analisi esplorative
 ```{r}
+load("~/proteomic_se.rds")
 mat <- assay(prot, "counts")
 counts_num <- apply(mat, 2, function(x) as.numeric(as.character(x)))
 rownames(counts_num) <- rownames(mat)
 colnames(counts_num) <- colnames(mat)
 assay(prot, "counts", withDimnames = FALSE) <- counts_num
 boxplot(assay(prot, "counts"))
-assay(prot, "logcounts") <- log2(assay(prot, "counts") + 1)
-boxplot(assay(prot, "logcounts")) #chiedere
-#normalizzazione? non credo
+#non serve fare il log
 
 #pca
-pca <- prcomp(t(assay(prot, "logcounts")), scale. = TRUE)
+pca <- prcomp(t(assay(prot, "counts")), scale. = TRUE)
 col <- as.factor(colData(prot)$condition)
 plot(pca$x[,1], pca$x[,2], col = col, pch = 19)
 legend("topright", legend = unique(col), col = unique(col), pch = 19)
@@ -79,7 +78,7 @@ legend("topright", legend = unique(col), col = unique(col), pch = 19)
 
 condition <- factor(prot$condition, levels= c("Control", "PreCac", "Cachexia"))
 design <- model.matrix(~ 0 + condition)
-y <- assay(prot,"logcounts")
+y <- assay(prot,"counts")
 fit <- lmFit(y, design)
 
 contr.matrix <- makeContrasts(
@@ -109,134 +108,163 @@ saveWorkbook(wb, file = "limma_results.xlsx", overwrite = TRUE)
 
 ```
 
-#DEG separati
-Nei confronti interni alle donne col cancro al pancreas si ritrovano molti più DEG che negli altri casi
+#DEG con anche le altre variabili di interesse
 ```{r}
-condition <- factor(prot$condition, levels= c("Control", "Pre-Cac", "Cachexia"))
-levels(condition)[levels(condition) == "Pre-Cac"] <- "PreCac"
-disease <- as.factor(prot$illness)
-sex <- as.factor(prot$sex)
-
-#ma uso i controlli due volte o li divido in 2? 
-table(prot$condition) #è che sono già pochi
-
-#Maschi pancreas -----------------------------------------------------------------------------------------------
-y_mp <- assay(prot,"logcounts")[,(prot$illness == "Pancreas" | prot$illness == "Control") & prot$sex == "M"]
-cond_mp <- condition[(prot$illness == "Pancreas" | prot$illness == "Control") & prot$sex == "M"]
-design_mp <- model.matrix(~ 0 + cond_mp)
-fit_mp <- lmFit(y_mp, design_mp)
-
-contr.matrix_mp <- makeContrasts(
-  PreCac_vs_Control =  cond_mpPreCac - cond_mpControl,
-  Cac_vs_PreCac = cond_mpCachexia - cond_mpPreCac,
-  Cac_vs_Control = cond_mpCachexia - cond_mpControl,
-  levels = design_mp
-)
-contr.matrix_mp
-
-fit_mp <- contrasts.fit(fit_mp, contrasts = contr.matrix_mp)
-fit_mp <- eBayes(fit_mp)
-
-#vengono pochissimi DEG così
-topTable(fit_mp, coef = "PreCac_vs_Control",p.value = 0.05, number = Inf) #2
-topTable(fit_mp, coef = "Cac_vs_PreCac",p.value = 0.05, number = Inf) #2
-topTable(fit_mp, coef = "Cac_vs_Control",p.value = 0.05, number = Inf)  #42
-
-#Femmine pancreas -----------------------------------------------------------------------------------------------
-y_fp <- assay(prot,"logcounts")[,(prot$illness == "Pancreas" | prot$illness == "Control") & prot$sex == "F"]
-cond_fp <- condition[(prot$illness == "Pancreas" | prot$illness == "Control") & prot$sex == "F"]
-design_fp <- model.matrix(~ 0 + cond_fp)
-fit_fp <- lmFit(y_fp, design_fp)
-
-contr.matrix_fp <- makeContrasts(
-  PreCac_vs_Control =  cond_fpPreCac - cond_fpControl,
-  Cac_vs_PreCac = cond_fpCachexia - cond_fpPreCac,
-  Cac_vs_Control = cond_fpCachexia - cond_fpControl,
-  levels = design_fp
-)
-contr.matrix_fp
-
-fit_fp <- contrasts.fit(fit_fp, contrasts = contr.matrix_fp)
-fit_fp <- eBayes(fit_fp)
-
-#qui invece molti di più
-topTable(fit_fp, coef = "PreCac_vs_Control",p.value = 0.05, number = Inf) #12
-topTable(fit_fp, coef = "Cac_vs_PreCac",p.value = 0.05, number = Inf) #16
-topTable(fit_fp, coef = "Cac_vs_Control",p.value = 0.05, number = Inf)  #221
-
-#Femmine colon -----------------------------------------------------------------------------------------------
-y_fc <- assay(prot,"logcounts")[,(prot$illness == "CRC" | prot$illness == "Control") & prot$sex == "F"]
-cond_fc <- condition[(prot$illness == "CRC" | prot$illness == "Control") & prot$sex == "F"]
-design_fc <- model.matrix(~ 0 + cond_fc)
-fit_fc <- lmFit(y_fc, design_fc)
-
-contr.matrix_fc <- makeContrasts(
-  PreCac_vs_Control =  cond_fcPreCac - cond_fcControl,
-  Cac_vs_PreCac = cond_fcCachexia - cond_fcPreCac,
-  Cac_vs_Control = cond_fcCachexia - cond_fcControl,
-  levels = design_fc
-)
-contr.matrix_fc
-
-fit_fc <- contrasts.fit(fit_fc, contrasts = contr.matrix_fc)
-fit_fc <- eBayes(fit_fc)
-
-#di nuovo pochissimi
-topTable(fit_fc, coef = "PreCac_vs_Control",p.value = 0.05, number = Inf) #3
-topTable(fit_fc, coef = "Cac_vs_PreCac",p.value = 0.05, number = Inf) #4
-topTable(fit_fc, coef = "Cac_vs_Control",p.value = 0.05, number = Inf)  #2
-
-#Maschi colon -----------------------------------------------------------------------------------------------
-y_mc <- assay(prot,"logcounts")[,(prot$illness == "CRC" | prot$illness == "Control") & prot$sex == "M"]
-cond_mc <- condition[(prot$illness == "CRC" | prot$illness == "Control") & prot$sex == "M"]
-design_mc <- model.matrix(~ 0 + cond_mc)
-fit_mc <- lmFit(y_mc, design_mc)
-
-contr.matrix_mc <- makeContrasts(
-  PreCac_vs_Control =  cond_mcPreCac - cond_mcControl,
-  Cac_vs_PreCac = cond_mcCachexia - cond_mcPreCac,
-  Cac_vs_Control = cond_mcCachexia - cond_mcControl,
-  levels = design_mc
-)
-contr.matrix_mc
-
-fit_mc <- contrasts.fit(fit_mc, contrasts = contr.matrix_mc)
-fit_mc <- eBayes(fit_mc)
-
-#qui invece molti di più
-topTable(fit_mc, coef = "PreCac_vs_Control",p.value = 0.05, number = Inf) #7
-topTable(fit_mc, coef = "Cac_vs_PreCac",p.value = 0.05, number = Inf) #6
-topTable(fit_mc, coef = "Cac_vs_Control",p.value = 0.05, number = Inf)  #4
-
-```
-
-#DEG con altre variabili di interesse
-```{r}
-#condition e illness sono collineari perché il livello "control" è uguale.
-#forse la cosa che ha più senso è fare un'unica variabile (?)
+#Creo un'unica variabile per condition e illness perché il livello "control" che hanno è lo stesso.
 cond_x_dis <- interaction(prot$condition, prot$illness, drop = TRUE)
+levels(cond_x_dis) <- c("Control","Cac_CRC","PreCac_CRC","Cac_pan","PreCac_pan")
 table(cond_x_dis)
+sex <- prot$sex
 design <- model.matrix(~ 0 + cond_x_dis + sex)
-y <- assay(prot,"logcounts")
+y <- assay(prot,"counts")
 fit <- lmFit(y, design)
 
+#confronti separati ----------------------------------------------------------------------------------------
 contr.matrix <- makeContrasts(
-  PreCac_vs_Control =  PreCac - Control,
-  Cac_vs_PreCac = Cachexia - PreCac,
-  Cac_vs_Control = Cachexia - Control,
+  Cac_vs_PreCac_CRC = cond_x_disCac_CRC - cond_x_disPreCac_CRC,
+  Cac_vs_PreCac_pan = cond_x_disCac_pan - cond_x_disPreCac_pan,
+  Cac_vs_Control_CRC = cond_x_disCac_CRC - cond_x_disControl,
+  Cac_vs_Control_pan = cond_x_disCac_pan - cond_x_disControl,
+  PreCac_vs_Control_CRC = cond_x_disPreCac_CRC- cond_x_disControl,
+  PreCac_vs_Control_pan = cond_x_disPreCac_pan - cond_x_disControl,
   levels = design
 )
 contr.matrix
-
 fit <- contrasts.fit(fit, contrasts = contr.matrix)
 fit <- eBayes(fit)
 
-top_PreCac_vs_Control <- topTable(fit, coef = "PreCac_vs_Control",p.value = 0.05, number = Inf) #54
-top_Cac_vs_PreCac <- topTable(fit, coef = "Cac_vs_PreCac",p.value = 0.05, number = Inf) #176
-top_Cac_vs_Control <- topTable(fit, coef = "Cac_vs_Control",p.value = 0.05, number = Inf)  #248
+top_Cac_vs_PreCac_CRC <- topTable(fit, coef = "Cac_vs_PreCac_CRC",p.value = 0.05, number = Inf) #11
+top_Cac_vs_PreCac_pan <- topTable(fit, coef = "Cac_vs_PreCac_pan",p.value = 0.05, number = Inf) #87
+top_Cac_vs_Control_CRC <- topTable(fit, coef = "Cac_vs_Control_CRC",p.value = 0.05, number = Inf) #18
+top_Cac_vs_Control_pan <- topTable(fit, coef = "Cac_vs_Control_pan",p.value = 0.05, number = Inf) #338
+top_PreCac_vs_Control_CRC <- topTable(fit, coef = "PreCac_vs_Control_CRC",p.value = 0.05, number = Inf) #41
+top_PreCac_vs_Control_pan <- topTable(fit, coef = "PreCac_vs_Control_pan",p.value = 0.05, number = Inf) #41
 
+#confronto unico -------------------------------------------------------------------------------
+#fa la media tra i due cac e sottrae la media tra i due precac
+Cac_vs_PreCac <- c(
+  Control      = 0,
+  Cac_CRC      =  1/2,
+  PreCac_CRC   = -1/2,
+  Cac_pan      =  1/2,
+  PreCac_pan   = -1/2,
+  sexM = 0
+)
+
+Cac_vs_Control <- c(
+  Control      = -1,
+  Cac_CRC      =  1/2,
+  PreCac_CRC   =  0,
+  Cac_pan      =  1/2,
+  PreCac_pan   =  0,
+  sexM = 0
+)
+
+PreCac_vs_Control <- c(
+  Control      = -1,
+  Cac_CRC      =  0,
+  PreCac_CRC   =  1/2,
+  Cac_pan      =  0,
+  PreCac_pan   =  1/2,
+  sexM = 0
+)
+
+contrast_matrix <- cbind(
+  Cac_vs_PreCac     = Cac_vs_PreCac,
+  Cac_vs_Control    = Cac_vs_Control,
+  PreCac_vs_Control = PreCac_vs_Control
+)
+
+fit2 <- contrasts.fit(fit, contrast_matrix)
+fit2 <- eBayes(fit2, trend = TRUE)
+topTable(fit2, coef = "Cac_vs_PreCac",p.value = 0.05, number = Inf) #53
+topTable(fit2, coef = "Cac_vs_Control",p.value = 0.05, number = Inf) #134
+topTable(fit2, coef = "PreCac_vs_Control",p.value = 0.05, number = Inf) #50
+
+#Eventualmente si può fare anche una media pesata per paziente
 
 ```
+
+#Per TESTARE (non solo correggere) anche per la variabile sex farei direttamente due modelli separati
+#anche se perdo potenza
+#se no devo fare un'interazione a 3
+```{r}
+#Creo un'unica variabile per condition e illness perché il livello "control" che hanno è lo stesso.
+cond_x_dis <- interaction(prot$condition, prot$illness, drop = TRUE)
+levels(cond_x_dis) <- c("Control","Cac_CRC","PreCac_CRC","Cac_pan","PreCac_pan")
+table(cond_x_dis)
+sex <- prot$sex
+
+#SOLO MASCHI ----------------------------------------------------------------------------------------------
+prot_m <- prot[,prot$sex == "M"]
+cond_x_dis_m <- cond_x_dis[prot$sex == "M"]
+design <- model.matrix(~ 0 + cond_x_dis_m)
+y <- assay(prot_m,"counts")
+fit <- lmFit(y, design)
+
+#confronti separati ----------------------------------------------------------------------------------------
+contr.matrix <- makeContrasts(
+  Cac_vs_PreCac_CRC = cond_x_disCac_CRC - cond_x_disPreCac_CRC,
+  Cac_vs_PreCac_pan = cond_x_disCac_pan - cond_x_disPreCac_pan,
+  Cac_vs_Control_CRC = cond_x_disCac_CRC - cond_x_disControl,
+  Cac_vs_Control_pan = cond_x_disCac_pan - cond_x_disControl,
+  PreCac_vs_Control_CRC = cond_x_disPreCac_CRC- cond_x_disControl,
+  PreCac_vs_Control_pan = cond_x_disPreCac_pan - cond_x_disControl,
+  levels = design
+)
+contr.matrix
+fit <- contrasts.fit(fit, contrasts = contr.matrix)
+fit <- eBayes(fit)
+
+top_Cac_vs_PreCac_CRC <- topTable(fit, coef = "Cac_vs_PreCac_CRC",p.value = 0.05, number = Inf) 
+top_Cac_vs_PreCac_pan <- topTable(fit, coef = "Cac_vs_PreCac_pan",p.value = 0.05, number = Inf) 
+top_Cac_vs_Control_CRC <- topTable(fit, coef = "Cac_vs_Control_CRC",p.value = 0.05, number = Inf)
+top_Cac_vs_Control_pan <- topTable(fit, coef = "Cac_vs_Control_pan",p.value = 0.05, number = Inf)
+top_PreCac_vs_Control_CRC <- topTable(fit, coef = "PreCac_vs_Control_CRC",p.value = 0.05, number = Inf)
+top_PreCac_vs_Control_pan <- topTable(fit, coef = "PreCac_vs_Control_pan",p.value = 0.05, number = Inf) 
+
+#confronto unico -------------------------------------------------------------------------------
+#fa la media tra i due cac e sottrae la media tra i due precac
+Cac_vs_PreCac <- c(
+  Control      = 0,
+  Cac_CRC      =  1/2,
+  PreCac_CRC   = -1/2,
+  Cac_pan      =  1/2,
+  PreCac_pan   = -1/2
+)
+
+Cac_vs_Control <- c(
+  Control      = -1,
+  Cac_CRC      =  1/2,
+  PreCac_CRC   =  0,
+  Cac_pan      =  1/2,
+  PreCac_pan   =  0
+)
+
+PreCac_vs_Control <- c(
+  Control      = -1,
+  Cac_CRC      =  0,
+  PreCac_CRC   =  1/2,
+  Cac_pan      =  0,
+  PreCac_pan   =  1/2
+)
+
+contrast_matrix <- cbind(
+  Cac_vs_PreCac     = Cac_vs_PreCac,
+  Cac_vs_Control    = Cac_vs_Control,
+  PreCac_vs_Control = PreCac_vs_Control
+)
+
+fit2 <- contrasts.fit(fit, contrast_matrix)
+fit2 <- eBayes(fit2, trend = TRUE)
+topTable(fit2, coef = "Cac_vs_PreCac",p.value = 0.05, number = Inf)
+topTable(fit2, coef = "Cac_vs_Control",p.value = 0.05, number = Inf)
+topTable(fit2, coef = "PreCac_vs_Control",p.value = 0.05, number = Inf)
+
+#Eventualmente si può fare anche una media pesata per paziente
+
+```
+
 
 
 

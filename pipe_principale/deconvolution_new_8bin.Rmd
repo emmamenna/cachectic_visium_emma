@@ -1,0 +1,380 @@
+---
+title: "deconv new"
+output: html_document
+date: "2025-11-27"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(arrow)
+library(Banksy)
+library(BiocParallel)
+library(DropletUtils)
+library(dplyr)
+library(edgeR)
+library(ggplot2)
+library(graphics)
+library(igraph)
+library(jsonlite)
+library(Matrix)
+library(OSTA.data)
+library(patchwork)
+library(pheatmap)
+library(S4Vectors)
+library(scDblFinder)
+library(scater)
+library(scran)
+library(scuttle)
+library(SingleCellExperiment)
+library(SpatialExperiment)
+library(SummarizedExperiment)
+library(tidyr)
+library(VisiumIO)
+library(spacexr)
+library(SpotSweeper)
+library(ggspavis)
+library(writexl)
+library(lme4)
+```
+
+#Deconvolution function
+For each spot the probability for each cell type as well as the label of the principal cell type are saved.
+```{r}
+run_my_rctd <- function(spe, sce_ref, out_prefix) {
+  set.seed(9237)
+  # rownames(spe) <- rowData(spe)$Symbol
+  # rownames(spe) <- make.unique(rownames(spe))
+  
+  #data preparation
+  rctd_data <- createRctd(
+    spatial_experiment = spe,
+    reference_experiment = sce_ref,
+    cell_type_col = "subclusters"
+  )
+  
+  #deconvolution
+  results <- runRctd(rctd_data, rctd_mode = "multi")
+  
+  #weights extraction
+  ws <- assay(results, "weights")
+  ws <- data.frame(t(as.matrix(ws)))
+  colData(spe)[names(ws)] <- ws[colnames(spe), ] 
+  
+  #Cluster labelling
+  ids <- names(ws)[apply(ws, 1, which.max)]
+  ids <- gsub("\\.([A-z])", " \\1", ids)
+  idx <- match(colnames(spe), rownames(ws))
+  spe$cell_type <- factor(ids[idx]) 
+  print(table(spe$cell_type))
+  
+  assign("spe_list", replace(spe_list, out_prefix, spe), envir = .GlobalEnv)
+  invisible(spe)
+}
+```
+
+Creating a list of spatial experiment objects (one for each sample) and applying the deconvolution
+to all samples separately.
+```{r}
+sce_ref <- readRDS("~/multiome_sce.rds") #reference dataset from multiome
+
+load("~/spe_list_8bin.RData")
+
+#cambio il nome dell'assay
+for (i in seq_along(spe_list)) {
+  assayNames(spe_list[[i]])[assayNames(spe_list[[i]]) == "X"] <- "counts"
+}
+
+#calling deconvolution on each sample
+da_fare <- names(spe_list[!names(spe_list) %in% "blocco1_c26foxO"])
+for (name in da_fare) {
+    run_my_rctd(spe_list[[name]], sce_ref, name)
+}
+
+save(spe_list,file="spe_list_8bin.RData")
+
+```
+
+Plots to show deconvolution on tissue: for each sample 2 plots are created. In the first, for all cell types
+spots are coloured according to the probability (weigth) for that cell type. In the second one, each
+spot is coloured according to its clustering labels (the cell type with highest weigth).
+```{r}
+
+# spe_list <- lapply(spe_list, function(spe) {
+#    keep <- !is.na(spe$cell_type) & colSums(counts(spe)) > 0
+#    spe[,keep]
+# })
+#vanno via tanti spot 
+#CHE SIA DA RIDURRE IL NUMERO DI TIPI CELL. POSSIBILI IN UNO SPOT? NON SO SE CAMBI QUALCOSA
+#salvata
+
+for (spe_name in names(spe_list)) {
+  spe <- spe_list[[spe_name]]
+  ws <- colData(spe)[,seq(10,24,1)]
+  p <- lapply(names(ws), function(nm) {
+  plotCoords(spe, annotate = nm, point_size = 0.05) +
+    scale_color_gradientn(
+      colors = rev(hcl.colors(9, "Rocket")),
+      limits = c(0, 1)  # fissa scala da 0 a 1
+    ) +
+    ggtitle(nm)
+  })
+
+  final_plot <- wrap_plots(p, nrow = 3, ncol = 5, guides = "collect") &
+  theme(
+    legend.key.width = unit(0.5, "lines"),
+    legend.key.height = unit(1, "lines"),
+    strip.text = element_text(size = 5)
+  ) &
+  scale_color_gradientn(colors = rev(hcl.colors(9, "Rocket")), limits = c(0, 1))
+
+  ggsave(paste0(spe_name, "_types.png"), final_plot, width = 10, height = 8, dpi = 300)
+  
+your_color_vector <- c(
+    "Endothelial" = "#0072B2",       # blu vivo
+    "FAPs" = "#009E73",              # verde vivo
+    "Immune_Cells" = "#D55E00",      # arancione-rosso
+    "MuSC" = "#E69F00",              # arancione
+    "Myonuclei_IIb" = "#CC79A7",     # magenta
+    "Myonuclei_IIx" = "#56B4E9",     # azzurro chiaro
+    "Myonuclei_IIx_IIa" = "#F0E442", # giallo
+    "Myonuclei_IIx_IIb" = "#9B59B6", # viola chiaro
+    "Myonuclei_MTJ" = "#0099B4",     # turchese
+    "Myonuclei_NMJ" = "#DDAA33",     # senape
+    "Myonuclei_Trim63" = "#CC3311",  # rosso scuro
+    "Nervous_System" = "#44AA99",    # verde acqua
+    "Pericyte" = "#AA4499",          # viola/rosa
+    "Smooth_Muscular" = "#332288",   # blu-viola scuro
+    "Tenocyte" = "#A3E635"           # verde lime
+)
+
+stat1 <- plotCoords(spe, annotate = "cell_type", point_size = 0.05) +
+    scale_color_manual(values = your_color_vector) +
+    theme(
+      legend.key.width = unit(0.5, "lines"),
+      legend.key.height = unit(1, "lines")
+    )
+
+ggsave(paste0(spe_name, "_dec.png"), stat1, width = 10, height = 8, dpi = 300)
+}
+  
+```
+
+#Barplot to show cell type proportions for each sample
+```{r}
+
+names(spe_list) <- c("c26foxO_b1","sham_b1","c26STAT3_b1","c26SMAD23_b2","c26murf1_b2","c26_b2",
+                     "sham_b3","c26murf1_b3","c26STAT3_b3","c26_b4","c26foxO_b4",
+                     "c26SMAD23_b4","c26SMAD23_b5","c26STAT3_b5","c26murf1_b5",
+                     "c26_b6","sham_b6","c26foxO_b6","c26SMAD23_b9","c26foxO_b9","c26murf1_b9")
+
+prop_df <- lapply(names(spe_list), function(name) {
+  spe <- spe_list[[name]]
+  tab <- table(spe$cell_type)
+  prop <- prop.table(tab)
+  data.frame(
+    sample = name,
+    cell_type = names(prop),
+    proportion = as.numeric(prop)
+  )
+}) |> bind_rows()
+
+your_color_vector <- c(
+    "Endothelial" = "#0072B2",       # blu vivo
+    "FAPs" = "#009E73",              # verde vivo
+    "Immune_Cells" = "#D55E00",      # arancione-rosso
+    "MuSC" = "#E69F00",              # arancione
+    "Myonuclei_IIb" = "#CC79A7",     # magenta
+    "Myonuclei_IIx" = "#56B4E9",     # azzurro chiaro
+    "Myonuclei_IIx_IIa" = "#F0E442", # giallo
+    "Myonuclei_IIx_IIb" = "#9B59B6", # viola chiaro
+    "Myonuclei_MTJ" = "#0099B4",     # turchese
+    "Myonuclei_NMJ" = "#DDAA33",     # senape
+    "Myonuclei_Trim63" = "#CC3311",  # rosso scuro
+    "Nervous_System" = "#44AA99",    # verde acqua
+    "Pericyte" = "#AA4499",          # viola/rosa
+    "Smooth_Muscular" = "#332288",   # blu-viola scuro
+    "Tenocyte" = "#A3E635"           # verde lime
+)
+
+ggplot(prop_df, aes(x = sample, y = proportion, fill = cell_type)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = your_color_vector) +
+  theme_minimal() +
+  labs(
+    title = "Proporzioni dei tipi cellulari per campione",
+    x = "Campione (spe_list)",
+    y = "Proporzione",
+    fill = "Tipo Cellulare"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggsave("cell_type_proportions_8bin.png", width = 10, height = 6, dpi = 300)
+
+```
+
+#Barplot to show cell types proportions for each condition
+From this point on block 7 samples won't be considered anymore.
+```{r}
+prop_df_condition <- lapply(spe_list, function(spe) {
+  data.frame(
+    tissue_type = unique(spe$tissue_type),
+    cell_type = spe$cell_type
+  )
+}) |> bind_rows() |> filter(!is.na(cell_type))
+
+prop_df_condition <- prop_df_condition %>%
+  count(tissue_type, cell_type) %>%
+  group_by(tissue_type) %>%
+  mutate(proportion = n / sum(n)) %>%
+  ungroup()
+
+ggplot(prop_df_condition, aes(x = tissue_type, y = proportion, fill = cell_type)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = your_color_vector) +
+  theme_minimal() +
+  labs(
+    title = "Proporzioni dei tipi cellulari per condizione",
+    x = "Condizione (tissue_type)",
+    y = "Proporzione",
+    fill = "Tipo Cellulare"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggsave("cell_type_proportions_by_condition_8bin.png", width = 10, height = 6, dpi = 300)
+
+```
+
+
+#Table to see proportions 
+```{r}
+#by sample
+celltype_table <- lapply(names(spe_list), function(sample_name) {
+  spe <- spe_list[[sample_name]]
+  df <- as.data.frame(colData(spe))
+  df <- df %>%
+    group_by(cell_type) %>%
+    summarise(count = n()) %>%
+    mutate(proportion = count / sum(count),
+           sample = sample_name)
+  df
+}) %>%
+  bind_rows()
+
+celltype_matrix <- celltype_table %>%
+  select(sample, cell_type, proportion) %>%
+  pivot_wider(names_from = cell_type, values_from = proportion, values_fill = 0)
+
+celltype_matrix
+write_xlsx(celltype_matrix, "celltype_prop_samples_8bin.xlsx")
+
+#by condition
+ct_long <- lapply(spe_list, function(spe) {
+  data.frame(
+    tissue_type = unique(spe$tissue_type), 
+    cell_type   = spe$cell_type
+  )
+}) %>%
+  bind_rows()
+
+counts <- ct_long %>%
+  count(tissue_type, cell_type, name = "n")
+
+props <- counts %>%
+  group_by(tissue_type) %>%
+  mutate(prop = n / sum(n)) %>%
+  ungroup()
+
+props_wide <- props %>%
+  select(tissue_type, cell_type, prop) %>%
+  pivot_wider(names_from = cell_type, values_from = prop, values_fill = 0)
+
+write_xlsx(props_wide, path = "celltype_prop_cond_8bin.xlsx")
+
+```
+
+#boxplot of cell type proportions stratified by condition
+```{r}
+prop_per_sample <- purrr::imap_dfr(spe_list, function(spe, name) {
+  cd <- as.data.frame(SummarizedExperiment::colData(spe))
+  cd |>
+    filter(!is.na(cell_type)) |>
+    dplyr::count(cell_type, name = "count") |>
+    mutate(proportion  = count / sum(count),
+           sample      = name,
+           tissue_type = paste(unique(as.character(cd$tissue_type)), collapse = ", ")) |>
+    dplyr::rename(cell_type = cell_type)
+})
+ggplot(prop_per_sample, aes(x = tissue_type, y = proportion, fill = tissue_type)) +
+  geom_boxplot(outlier.shape = 21) +
+  facet_wrap(~ cell_type, scales = "free_y") +
+  scale_fill_manual(values = c("sham" = "#1B9E77", "c26" = "#D95F02")) +
+  theme_minimal(base_size = 12) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "Distribuzione proporzioni cell_type per tissue_type",
+       x = "Tissue type",
+       y = "Proporzione")
+ggsave("boxplot_cell_types.png", width = 10, height = 6, dpi = 300)
+
+```
+
+#indago
+```{r}
+plot(density(spe_list$sham_b1$Myonuclei_IIb))
+plot(density(spe_list$sham_b1$Myonuclei_NMJ))
+plot(density(spe_list$sham_b1$Myonuclei_IIx_IIa))
+plot(density(spe_list$sham_b1$Endothelial))
+#non ci sono tante probabilità intermedie
+
+```
+
+#provo con doublet
+```{r}
+run_my_rctd <- function(spe, sce_ref, out_prefix) {
+  set.seed(9237)
+  
+  #data preparation
+  rctd_data <- createRctd(
+    spatial_experiment = spe,
+    reference_experiment = sce_ref,
+    cell_type_col = "subclusters"
+  )
+  
+  #deconvolution
+  results <- runRctd(rctd_data, rctd_mode = "doublet")
+  
+  #weights extraction
+  ws <- assay(results, "weights")
+  ws <- data.frame(t(as.matrix(ws)))
+  colData(spe)[names(ws)] <- ws[colnames(spe), ] 
+  
+  #Cluster labelling
+  ids <- names(ws)[apply(ws, 1, which.max)]
+  ids <- gsub("\\.([A-z])", " \\1", ids)
+  idx <- match(colnames(spe), rownames(ws))
+  spe$cell_type <- factor(ids[idx]) 
+  
+  return(spe)
+}
+
+new_obj <- run_my_rctd(spe_list[["sham_b1"]], sce_ref, name)
+#cambiano un po' ma non diseratamente
+
+plot(density(new_obj$Myonuclei_IIb))
+plot(density(new_obj$Myonuclei_NMJ))
+plot(density(new_obj$Myonuclei_IIx_IIa))
+plot(density(new_obj$Endothelial))
+
+#però le probabilità sono cmq così
+#vediamo come sono in subset_list (16bin)
+load("~/subset_list.RData")
+plot(density(subset_list$sham_b1$Myonuclei_IIb))
+plot(density(subset_list$sham_b1$Myonuclei_NMJ))
+plot(density(subset_list$sham_b1$Myonuclei_IIx_IIa))
+plot(density(subset_list$sham_b1$Endothelial))
+#un pochino di più ma non è diversissimo
+
+```
+

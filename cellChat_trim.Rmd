@@ -51,7 +51,7 @@ subset_list <- lapply(subset_list, function(spe) {
 
   # Distanze tra tutti gli spot
   cell_dist <- computeCellDistance(
-    coordinates = spatialCoords(spe),
+    coordinates = spatialCoords(spe), 
     ratio = 0.316,
     tol = 4
   )
@@ -141,6 +141,106 @@ results
 #approccio2: seleziono solo i tipi cellulari che sono a distanza ravvicinata coi trim
 #basandomi sulle tabelle di frequenza
 ```{r}
+load("~/subset_list_spanorm.RData")
+
+subset_list <- lapply(subset_list, function(spe) {
+
+  # Distanze tra tutti gli spot
+  cell_dist <- computeCellDistance(
+    coordinates = spatialCoords(spe),
+    ratio = 0.316,
+    tol = 4
+  )
+  cell_dist <- as.matrix(cell_dist)
+
+  # Identifica righe corrispondenti ai nuclei Trim63
+  trim_idx <- which(spe$cell_type == "Myonuclei_Trim63")
+
+  # Se non ci sono trim → ritorna spe senza filtri
+  if (length(trim_idx) == 0) {
+    warning("Nessuno spot Trim63 in questo spe.")
+    return(spe)
+  }
+
+  # Distanze: righe = Trim, colonne = tutti gli spot
+  trim_dist <- cell_dist[trim_idx, , drop = FALSE]
+
+  trim_neigh <- apply(trim_dist, 2, function(x) any(x < 30))
+  spe_trim <- spe[, trim_neigh]
+  
+  #conto i tipi cellulari + presenti
+  ct_counts <- sort(table(spe_trim$cell_type), decreasing = TRUE)
+  
+  #tengo i top2 per ora
+  keep_ct <- names(ct_counts)[1:3]
+  pe_filt <- spe[, spe$cell_type %in% keep_ct]
+  print("Cell types mantenuti:")
+  print(keep_ct)
+  
+  spe_filt <- spe[, spe$cell_type %in% keep_ct]
+  return(spe_filt)
+})
+
+subset_list <- lapply(subset_list, function(spe){
+  spe$cell_type <- droplevels(spe$cell_type)
+  return(spe)
+})
+
+subset_list$c26_b2
+subset_list$c26_b4
+subset_list$c26_b6
+
+c26_list <- subset_list[names(subset_list) %in% c("c26_b2","c26_b4","c26_b6")]
+
+```
+
+#così non trova proprio nulla
+```{r}
+
+#spatial information
+spatial.factors <- data.frame(
+  ratio = 0.316,   # pixel -> micron conversion factor
+  tol   = 4    # half the dimension of bins in micron
+)
+
+#In questo caso dovrei usare anche il contact-dependent 
+set.seed(1733)
+cellchat_list <- lapply(c26_list, function(spx) {
+  sce <- as(spx, "SingleCellExperiment")
+  chat <- createCellChat(object = sce,
+                         datatype = "spatial",
+                         group.by = "cell_type",
+                         coordinates = spatialCoords(spx),
+                         assay ="logcounts",
+                         spatial.factors = spatial.factors)
+  chat@DB <- CellChatDB.mouse
+  # chat@DB.use <-subsetDB(chat@DB,search="Secreted Signaling")
+  chat <- subsetData(chat)
+  chat <- identifyOverExpressedGenes(chat)
+  chat <- identifyOverExpressedInteractions(chat)
+  chat <- computeCommunProb(chat, type = "triMean", 
+                            distance.use = TRUE,
+                            scale.distance = 0.1,
+                            k.min = 10, #min. interacting cell pairs for 2 groups to be defined close (default)
+                            contact.dependent = FALSE) #contact.range = 30
+  chat <- computeCommunProbPathway(chat)
+  chat <- aggregateNet(chat)
+  chat
+})
+
+results <- lapply(cellchat_list, function(x){
+  tryCatch({
+    df.net <- subsetCommunication(x, slot.name = "netP")
+    prob <- df.net %>%
+      group_by(pathway_name) %>%
+      summarise(sum = sum(prob))
+    prob[order(prob$sum, decreasing = TRUE), ]
+  }, error = function(e) {
+    message("Skipping one CellChat object: ", e$message)
+    return(NULL)
+  })
+})
+results
 
 ```
 

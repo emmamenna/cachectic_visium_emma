@@ -99,8 +99,8 @@ contrast_list <- list(
 for (contrast_name in names(contrast_list)) {
   lrt_list[[contrast_name]] <- list()
   
-  for (cell_type in unique(pb_mult$cell_type)) {
-    ct_pb <- pb_mult[, pb_mult$cell_type == cell_type]
+  for (celltype in unique(pb_mult$cell_type)) {
+    ct_pb <- pb_mult[, pb_mult$cell_type == celltype]
     y <- DGEList(counts(ct_pb), samples = as.data.frame(colData(ct_pb)))
     keep <- filterByExpr(y, group = y$samples$tissue_type)
     y <- y[keep,, keep.lib.sizes=FALSE]
@@ -119,7 +119,7 @@ for (contrast_name in names(contrast_list)) {
     sig_up <- sig[sig$logFC >= 0, ]
     sig_down <- sig[sig$logFC < 0, ]
     
-    lrt_list[[contrast_name]][[cell_type]] <- list(
+    lrt_list[[contrast_name]][[celltype]] <- list(
       full = res,
       sig = sig,
       up = sig_up,
@@ -128,7 +128,7 @@ for (contrast_name in names(contrast_list)) {
     
     gene_summary <- data.frame(
       contrast = contrast_name,
-      cell_type = cell_type,
+      cell_type = celltype,
       Geni_considerati = nrow(res),
       Geni_significativi = nrow(sig),
       Upregolati = nrow(sig_up),

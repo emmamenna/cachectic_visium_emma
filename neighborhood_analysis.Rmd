@@ -1,0 +1,65 @@
+---
+title: "neigh_analysis"
+output: html_document
+date: "2025-11-27"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+https://bioconductor.org/books/3.22/OSTA/pages/img-neighborhood-analysis.html
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(patchwork)
+library(RColorBrewer)
+library(BiocParallel)
+library(SpatialExperiment)
+```
+
+```{r}
+# # load data from previous section
+# spe <- readRDS("img-spe_cl.rds")
+# spe$k <- colLabels(spe)
+# # basic theme for spatial plots
+# theme_xy <- list(
+#     coord_equal(expand=FALSE), 
+#     theme_void(), theme(
+#         plot.margin=margin(l=5),
+#         legend.key=element_blank(),
+#         panel.background=element_rect(fill="black")))
+```
+
+```{r}
+library(RANN)
+k <- 10 # num. neighbors
+r <- 50 # dist. threshold
+i <- spe$k == 1 # source
+j <- spe$k == 4 # target
+xy <- spatialCoords(spe)
+# k-NN search: all cells have k neighbors
+ns_k <- nn2(xy[j, ], xy[i, ], k=k)
+is_k <- ns_k$nn.idx
+all(rowSums(is_k > 0) == k) 
+# w/ fixed-radius: cells have 0-k neighbors
+ns_r <- nn2(xy[j, ], xy[i, ], k=k, searchtype="radius", r=r)
+is_r <- ns_r$nn.idx
+range(rowSums(is_r > 0))
+```
+
+
+```{r}
+library(imcRtools)
+# construct kNN-graph based on Euclidean distances
+sqe <- buildSpatialGraph(spe, 
+    coords=spatialCoordsNames(spe),
+    img_id="sample_id", type="knn", k=10)
+# compute cluster frequencies among each cell's kNNs
+sqe <- aggregateNeighbors(sqe, 
+    colPairName="knn_interaction_graph", 
+    aggregate_by="metadata", count_by="k")
+# view composition of 1st cell's kNNs
+unlist(sqe$aggregatedNeighbors[1, ]) 
+```
