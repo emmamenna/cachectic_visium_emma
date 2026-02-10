@@ -40,8 +40,11 @@ library(writexl)
 library(lme4)
 ```
 
-#Deconvolution function
-For each spot the probability for each cell type as well as the label of the principal cell type are saved.
+#RCTD DEFINITIVA
+NB: usare doublet non cambia molto le cose
+Cambio UMI_min assumendo che 100 sia l'ideale per visium non HD (55micron),
+allora potrei mettere 55:8 = 100:x, x = 15
+Se no potrei provare intanto con 50.
 ```{r}
 run_my_rctd <- function(spe, sce_ref, out_prefix) {
   set.seed(9237)
@@ -52,7 +55,8 @@ run_my_rctd <- function(spe, sce_ref, out_prefix) {
   rctd_data <- createRctd(
     spatial_experiment = spe,
     reference_experiment = sce_ref,
-    cell_type_col = "subclusters"
+    cell_type_col = "subclusters",
+    UMI_min = 15 #CAMBIATO
   )
   
   #deconvolution
@@ -73,13 +77,8 @@ run_my_rctd <- function(spe, sce_ref, out_prefix) {
   assign("spe_list", replace(spe_list, out_prefix, spe), envir = .GlobalEnv)
   invisible(spe)
 }
-```
 
-Creating a list of spatial experiment objects (one for each sample) and applying the deconvolution
-to all samples separately.
-```{r}
-sce_ref <- readRDS("~/multiome_sce.rds") #reference dataset from multiome
-
+sce_ref <- readRDS("~/multiome_sce.rds")
 load("~/spe_list_8bin.RData")
 
 #cambio il nome dell'assay
@@ -87,28 +86,17 @@ for (i in seq_along(spe_list)) {
   assayNames(spe_list[[i]])[assayNames(spe_list[[i]]) == "X"] <- "counts"
 }
 
-#calling deconvolution on each sample
-da_fare <- names(spe_list[!names(spe_list) %in% "blocco1_c26foxO"])
+da_fare <- c("blocco1_c26foxO","blocco1_sham","blocco5_c26SMAD23","blocco5_c26murf1","blocco1_c26STAT3",
+             "blocco5_c26STAT3")
 for (name in da_fare) {
     run_my_rctd(spe_list[[name]], sce_ref, name)
 }
 
-save(spe_list,file="spe_list_8bin.RData")
-
+save(spe_list,file="spe_list_8bin_ann2.RData")
 ```
 
-Plots to show deconvolution on tissue: for each sample 2 plots are created. In the first, for all cell types
-spots are coloured according to the probability (weigth) for that cell type. In the second one, each
-spot is coloured according to its clustering labels (the cell type with highest weigth).
+#Grafici per tutti i campioni
 ```{r}
-
-# spe_list <- lapply(spe_list, function(spe) {
-#    keep <- !is.na(spe$cell_type) & colSums(counts(spe)) > 0
-#    spe[,keep]
-# })
-#vanno via tanti spot 
-#CHE SIA DA RIDURRE IL NUMERO DI TIPI CELL. POSSIBILI IN UNO SPOT? NON SO SE CAMBI QUALCOSA
-#salvata
 
 for (spe_name in names(spe_list)) {
   spe <- spe_list[[spe_name]]
@@ -130,7 +118,7 @@ for (spe_name in names(spe_list)) {
   ) &
   scale_color_gradientn(colors = rev(hcl.colors(9, "Rocket")), limits = c(0, 1))
 
-  ggsave(paste0(spe_name, "_types.png"), final_plot, width = 10, height = 8, dpi = 300)
+  ggsave(paste0(spe_name, "_types2.png"), final_plot, width = 10, height = 8, dpi = 300)
   
 your_color_vector <- c(
     "Endothelial" = "#0072B2",       # blu vivo
@@ -150,14 +138,14 @@ your_color_vector <- c(
     "Tenocyte" = "#A3E635"           # verde lime
 )
 
-stat1 <- plotCoords(spe, annotate = "cell_type", point_size = 0.05) +
+stat1 <- plotCoords(spe, annotate = "cell_type", point_size = 0.01) +
     scale_color_manual(values = your_color_vector) +
     theme(
       legend.key.width = unit(0.5, "lines"),
       legend.key.height = unit(1, "lines")
     )
 
-ggsave(paste0(spe_name, "_dec.png"), stat1, width = 10, height = 8, dpi = 300)
+ggsave(paste0(spe_name, "_dec2.png"), stat1, width = 10, height = 8, dpi = 300)
 }
   
 ```
@@ -216,8 +204,8 @@ ggsave("cell_type_proportions_8bin.png", width = 10, height = 6, dpi = 300)
 ```
 
 #Barplot to show cell types proportions for each condition
-From this point on block 7 samples won't be considered anymore.
 ```{r}
+spe_list$c26foxO_b1$tissue_type <- "c26foxO"
 prop_df_condition <- lapply(spe_list, function(spe) {
   data.frame(
     tissue_type = unique(spe$tissue_type),
@@ -246,7 +234,6 @@ ggplot(prop_df_condition, aes(x = tissue_type, y = proportion, fill = cell_type)
 ggsave("cell_type_proportions_by_condition_8bin.png", width = 10, height = 6, dpi = 300)
 
 ```
-
 
 #Table to see proportions 
 ```{r}
@@ -320,61 +307,155 @@ ggsave("boxplot_cell_types.png", width = 10, height = 6, dpi = 300)
 
 ```
 
-#indago
+#PER STAMPARE ANCHE I PROFILI DEI CELL_TYPES ---------------------------------------------------------
 ```{r}
-plot(density(spe_list$sham_b1$Myonuclei_IIb))
-plot(density(spe_list$sham_b1$Myonuclei_NMJ))
-plot(density(spe_list$sham_b1$Myonuclei_IIx_IIa))
-plot(density(spe_list$sham_b1$Endothelial))
-#non ci sono tante probabilità intermedie
-
-```
-
-#provo con doublet
-```{r}
-run_my_rctd <- function(spe, sce_ref, out_prefix) {
-  set.seed(9237)
-  
-  #data preparation
-  rctd_data <- createRctd(
+sce_ref <- readRDS("~/multiome_sce.rds")
+load("~/spe_list_8bin.RData")
+spe <- spe_list$blocco1_sham
+rctd_data <- createRctd(
     spatial_experiment = spe,
     reference_experiment = sce_ref,
-    cell_type_col = "subclusters"
-  )
-  
-  #deconvolution
-  results <- runRctd(rctd_data, rctd_mode = "doublet")
-  
-  #weights extraction
-  ws <- assay(results, "weights")
-  ws <- data.frame(t(as.matrix(ws)))
-  colData(spe)[names(ws)] <- ws[colnames(spe), ] 
-  
-  #Cluster labelling
-  ids <- names(ws)[apply(ws, 1, which.max)]
-  ids <- gsub("\\.([A-z])", " \\1", ids)
-  idx <- match(colnames(spe), rownames(ws))
-  spe$cell_type <- factor(ids[idx]) 
-  
-  return(spe)
-}
+    cell_type_col = "subclusters",
+    UMI_min = 15
+)
 
-new_obj <- run_my_rctd(spe_list[["sham_b1"]], sce_ref, name)
-#cambiano un po' ma non diseratamente
-
-plot(density(new_obj$Myonuclei_IIb))
-plot(density(new_obj$Myonuclei_NMJ))
-plot(density(new_obj$Myonuclei_IIx_IIa))
-plot(density(new_obj$Endothelial))
-
-#però le probabilità sono cmq così
-#vediamo come sono in subset_list (16bin)
-load("~/subset_list.RData")
-plot(density(subset_list$sham_b1$Myonuclei_IIb))
-plot(density(subset_list$sham_b1$Myonuclei_NMJ))
-plot(density(subset_list$sham_b1$Myonuclei_IIx_IIa))
-plot(density(subset_list$sham_b1$Endothelial))
-#un pochino di più ma non è diversissimo
+RCTD_obj <- createRctdConfig(rctd_data, max_cores = 4)
+RCTD_obj <- fitBulk(RCTD_obj)
 
 ```
+
+```{r}
+
+profiles_env <- new.env()
+
+fitBulk_custom <- function (RCTD, sample_id, profiles_env) 
+{
+  bulkData <- spacexr:::prepareBulkData(spacexr:::cell_type_info(RCTD)$info[[1]], 
+        spacexr:::spatialRNA(RCTD), spacexr:::internal_vars(RCTD)$gene_list_bulk)
+    message("fitBulk: decomposing bulk")
+    decompose_results <- spacexr:::decompose_full(bulkData$X, sum(spacexr:::nUMI(spacexr:::spatialRNA(RCTD))), 
+        bulkData$b, verbose = FALSE, constrain = FALSE, MIN_CHANGE = spacexr:::config(RCTD)$MIN_CHANGE_BULK, 
+        n.iter = 100, bulk_mode = TRUE)
+    spacexr:::internal_vars(RCTD)$proportions <- decompose_results$weights
+    spacexr:::cell_type_info(RCTD)$renorm <- spacexr:::cell_type_info(RCTD)$info
+    profiles <- spacexr:::getNormRef(spacexr:::spatialRNA(RCTD), 
+        spacexr:::cell_type_info(RCTD)$info[[1]], spacexr:::internal_vars(RCTD)$gene_list_bulk, 
+        decompose_results$weights)
+  
+    profiles_env[[sample_id]] <- profiles
+  
+    spacexr:::cell_type_info(RCTD)$renorm[[1]] <- profiles
+    RCTD
+}
+
+RCTD_obj <- fitBulk_custom(RCTD_obj, "sham_b1", profiles_env)
+library(writexl)
+profiles <- as.data.frame(profiles_env[["sham_b1"]])
+profiles$gene <- rownames(profiles)
+profiles <- profiles[, c("gene", setdiff(colnames(profiles), "gene"))]
+#write_xlsx(profiles, "profiles_sham_b1.xlsx")
+
+```
+#Dotplot --------------------------------------------------------------------------------------
+```{r}
+library(readxl)
+profiles <- read_xlsx("~/profiles_sham_b1.xlsx")
+markers <- read.table("~/geni_identita.txt")
+markers <- as.vector(unlist(markers))
+prof_markers <- profiles[profiles$gene %in% markers,]
+genes <- prof_markers$gene
+library(tidyverse)
+std_prof <- t(scale(t(as.matrix(prof_markers[,-1])),center=FALSE))
+std_prof <- as.tibble(std_prof)
+std_prof$gene <- genes
+
+# medie_riga <- rowMeans(as.matrix(profiles[,-1]))
+# raw_std <- rowSds(as.matrix(profiles[,-1]))
+# prof_std <- sweep(as.matrix(profiles[,-1]),1,medie_riga,"-")
+# prof_std <- sweep(prof_std,1,raw_std,"/")
+
+expr_long <- std_prof %>%
+  pivot_longer(
+    cols = -gene,
+    names_to = "celltype",
+    values_to = "expression"
+)
+
+ggplot(expr_long, aes(x = celltype, y = gene)) +
+  geom_point(aes(size = expression, color = expression)) +
+  scale_color_viridis_c() +
+  scale_size_area() + #COMANDO UTILE X LA VISUALIZZAZIONE
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+```
+#I geni identità passano i filtri DI RCTD?
+```{r}
+markers <- read.table("~/geni_identita.txt")
+markers <- as.vector(unlist(markers))
+load("~/subset_list.RData")
+load("~/spe_list_8bin.RData")
+sce_ref <- readRDS("~/multiome_sce.rds")
+
+rctd_16bin <- createRctd(
+  spatial_experiment = subset_list$sham_b1,
+  reference_experiment = sce_ref,
+  cell_type_col = "subclusters"
+)
+
+rctd16_markers <- markers %in% rownames(rctd_16bin$spatial_experiment)
+
+rctd_8bin <- createRctd(
+  spatial_experiment = spe_list$blocco1_sham,
+  reference_experiment = sce_ref,
+  cell_type_col = "subclusters",
+  UMI_min = 15 #CAMBIATO
+)
+rctd8_markers <- markers %in% rownames(rctd_8bin$spatial_experiment)
+
+markers_df <- data.frame(
+  markers = markers,
+  rctd_16 = rctd16_markers,
+  rctd_8 = rctd8_markers
+)
+library(writexl)
+write_xlsx(markers_df, path = "rctd_markers.xlsx")
+
+?runRctd
+
+```
+
+#Check markers proportions
+```{r}
+markers <- read.table("~/geni_identita.txt")
+markers <- as.vector(unlist(markers))
+load("~/subset_list.RData")
+load("~/spe_list_8bin.RData")
+library(SpatialExperiment)
+
+#8 bin
+spe_markers <- spe_list$blocco1_sham[markers,]
+markers_depth <- rowSums(counts(spe_markers))
+depth <- sum(markers_depth)
+markers_prop <- markers_depth/depth *100
+
+#16bin
+spe_markers16 <- subset_list$sham_b1[markers,]
+markers_depth16 <- rowSums(counts(spe_markers16))
+depth16 <- sum(markers_depth16)
+markers_prop16 <- markers_depth16/depth16 * 100
+
+df_markers <- data.frame(
+  markers = markers,
+  bin8 = markers_prop,
+  bin16 = markers_prop16
+)
+library(writexl)
+write_xlsx(df_markers, path="markers_percentages.xlsx")
+
+```
+
+
 

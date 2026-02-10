@@ -1,0 +1,112 @@
+---
+title: "dec_lasso"
+output: html_document
+date: "2026-01-23"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Preparazione dati (NON RIFARE)
+```{r}
+load("~/markers_deg.RData")
+markers_bio <- readRDS("~/marker_genes_list_singleR_annot.rds")
+multiome_sce <- readRDS("~/multiome_sce.rds")
+load("~/markers_paper.RData")
+
+#prendo solo i primi 20 in ordine di espressione tra i markers dei DEG 
+markers_deg <- lapply(markers_deg, function(x) x[1:20])
+
+#metti insieme markers deg e bio
+names(markers_bio)
+names(markers_deg) <- c("Endothelial","FAPs","Immune_Cells","MuSC","Nervous_System","Pericyte",
+                        "Smooth_Muscular","Tenocyte","Myonuclei_IIb","Myonuclei_IIx",
+                        "Myonuclei_IIx_IIa","Myonuclei_IIx_IIb","Myonuclei_MTJ","Myonuclei_NMJ",
+                        "Myonuclei_Trim63")
+markers_list <- Map(c, markers_deg, markers_bio)
+markers_list <- lapply(markers_list, function(x) unique(x))
+
+#aggiungo anche i markers del paper
+names(markers_paper) <- c("Endothelial","FAPs","Immune_Cells","MuSC","Pericyte",
+                        "Smooth_Muscular","Tenocyte","Myonuclei_IIb","Myonuclei_IIx",
+                        "Myonuclei_MTJ","Myonuclei_NMJ")
+
+common_names <- intersect(names(markers_paper), names(markers_list))
+markers_common <- Map(c, markers_list[common_names], markers_paper[common_names])
+markers_common <- lapply(markers_common, function(x) unique(x))
+markers <- c(markers_common, markers_list[!names(markers_list) %in% common_names])
+
+#save(markers, file = "markers_list_mixed.RData")
+```
+
+```{r}
+#load("~/markers_list_mixed.RData")
+
+#a matrix with the cell type gene signatures (log expression) to be used for deconvolution.
+#Genes in row and cell types in columns.
+library(scuttle)
+pb_mult <- aggregateAcrossCells(multiome_sce, use.assay.type = "counts", 
+                                id=DataFrame(label = multiome_sce$subclusters))
+#prendo solo i markers
+markers <- as.vector(unlist(markers_list))
+markers <- unique(markers)
+markers[markers == "Ncam"] <- "Ncam1"
+markers[markers == "Cd140a"] <- "Pdgfra"
+markers[markers == "Sca1"] <- "Atxn1"
+pb_mult <- pb_mult[markers,]
+
+```
+
+#Deconvoluzione
+```{r}
+library(deconsgl)
+?deconvolve
+#Given a matrix of tumor samples and a matrix of cell type gene signatures,
+#this function returns a vector of cell type composition.
+load("~/subset_list.RData")
+spe <- subset_list$sham_b1
+spe <- logNormCounts(spe)
+pb_mult <- logNormCounts(pb_mult)
+
+library(BiocParallel)
+common <- intersect(rownames(logcounts(spe)),
+                    rownames(logcounts(pb_mult)))
+
+#recupera soglia sulla varianza
+X <- logcounts(spe)[common, ]
+Y <- logcounts(pb_mult)[common, ]
+var_genes <- rowVars(as.matrix(X)) > 1e-8
+X <- X[var_genes, ]
+Y <- Y[var_genes, ]
+
+#lasso normale
+dec_lasso <- deconvolve(X, Y,
+                        d = 200, #length(lambda.seq)
+                        alpha = 1,
+                        purity = 1, #lambda.min
+                        BPPARAM = MulticoreParam(10)) 
+
+# Error in {: task 3 failed - "The algorithm has encountered a convergence problem
+#    Try/check the following:
+#    (1) Check the lambda sequence and try with a longer sequence (the length d should be larger than 100) 
+#    (2) try with a larger lambda.min
+#    (3) Ensure minimum one sample from each group/class present in all subsample (or cross validation) sets used 
+
+#sparse group lasso
+dec_lasso <- deconvolve(X, Y,
+                        d = 200, #length(lambda.seq)
+                        alpha = 0.5,
+                        purity = 1, #lambda.min
+                        groups = pb_mult$subclusters,
+                        BPPARAM = MulticoreParam(10))
+
+#dec_lasso$
+# lsgl::cv
+# lsgl::fit
+
+```
+
+
+
+

@@ -357,4 +357,52 @@ for (slice_name in names(subset_list)) {
 
 ```
 
+#solo nello sham_b1 per gli 8bin
+#Visualizzazione nel tessuto con scala comune per campione (per confronto)
+```{r}
+load("~/spe_list_8bin.RData")
+data <- read.table("~/geni_identita.txt")
+vec <- as.vector(data)
+markers <- unlist(vec[1], use.names = FALSE)
+markers
 
+spe <- spe_list$blocco1_sham
+expr_matrix <- counts(spe)[markers, , drop = FALSE]
+
+library(ggplot2)
+library(SpatialExperiment)
+
+for (i in seq_along(markers)) {
+
+  marker <- markers[i]
+  
+  # Estrai espressione del marker
+  expr <- as.numeric(expr_matrix[marker, ])
+  
+  # Coordinate spaziali
+  coords <- as.data.frame(spatialCoords(spe))
+  colnames(coords) <- c("x_coord", "y_coord")
+  coords$expr <- expr
+  
+  # Grafico
+  p <- ggplot(coords, aes(x = x_coord, y = y_coord, color = expr)) +
+    geom_point(size = 0.3) +
+    coord_fixed() +
+    scale_y_reverse() +
+    ggtitle(marker) +
+    theme_void() +
+    theme(plot.title = element_text(size = 8)) +
+    scale_color_gradientn(colors = rev(hcl.colors(9, "Rocket")))
+  
+  # Salva un file per marker
+  ggsave(
+    filename = paste0("plot_sham_b1" , "_", marker, ".png"),
+    plot = p,
+    width = 6,
+    height = 6,
+    dpi = 300
+  )
+}
+
+
+```

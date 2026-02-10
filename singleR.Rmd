@@ -1,0 +1,192 @@
+---
+title: "singleR_markers_pipeline"
+output: html_document
+params:
+  saves_path_stem: "sr_nocell_expans"
+  labels_key: "labels_marker"
+  spe_key: "spaceranger_spe_nocell_expans"
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r library, message=FALSE, warning=FALSE, include=FALSE}
+library(purrr)
+library(ggplot2)
+library(ggspavis)
+library(jsonlite)
+library(anndataR)
+library(scuttle)
+library(SpatialExperiment)
+library(data.table)
+# to read spatialdata objects
+library(ggnewscale)
+#library(SpatialData)
+library(SingleCellExperiment)
+library(SingleR)
+library(BiocParallel)
+source("/mnt/europa/valerio/repositories/cachetic_visiumHD/r_scripts/utils/utils_fun.R")
+```
+
+Loading spatial experiment and single-cell reference and others
+```{r}
+spe_list <- readRDS(paste0(Rd_path, params$spe_key))
+sce_ref <- readRDS(ref_path)
+marker_genes <- readRDS(paste0(Rd_path, "marker_genes_list"))
+```
+
+
+## Annotazione di tutti i campioni
+
+Avvio per tutti i campioni con wilcoxon de.method e 10 geni de.n
+```{r}
+ann_list <- imap(spe_list, function(spe, name){
+  pred.mark <- SingleR(test = spe, ref = sce_ref, labels = sce_ref$subclusters, genes = marker_genes,
+                       BPPARAM = MulticoreParam(8))
+  pred.mark
+})
+
+saveRDS(ann_list, file = paste0(Rd_path,"results_markers_annot_", params$spe_key))
+
+####################################################################################
+load("~/spe_list_8bin.RData")
+multiome_sce <- readRDS("~/multiome_sce.rds")
+marker_genes <- readRDS("~/marker_genes_list_singleR_annot.rds")
+library(SingleR)
+
+spe_list <- lapply(spe_list, function(spe) {
+  spe <- spe[,colSums(counts(spe)) > 0]
+  spe <- logNormCounts(spe)
+  pred.mark <- SingleR(
+    test = spe,
+    ref = multiome_sce,
+    labels = multiome_sce$subclusters,
+    genes = marker_genes,
+    BPPARAM = MulticoreParam(8)
+  )
+  spe$cell_type <- pred.mark$labels
+  return(spe)
+})
+
+
+# your_color_vector <- c(
+#     "Endothelial" = "#0072B2",       # blu vivo
+#     "FAPs" = "#009E73",              # verde vivo
+#     "Immune_Cells" = "#D55E00",      # arancione-rosso
+#     "MuSC" = "#E69F00",              # arancione
+#     "Myonuclei_IIb" = "#CC79A7",     # magenta
+#     "Myonuclei_IIx" = "#56B4E9",     # azzurro chiaro
+#     "Myonuclei_IIx_IIa" = "#F0E442", # giallo
+#     "Myonuclei_IIx_IIb" = "#9B59B6", # viola chiaro
+#     "Myonuclei_MTJ" = "#0099B4",     # turchese
+#     "Myonuclei_NMJ" = "#DDAA33",     # senape
+#     "Myonuclei_Trim63" = "#CC3311",  # rosso scuro
+#     "Nervous_System" = "#44AA99",    # verde acqua
+#     "Pericyte" = "#AA4499",          # viola/rosa
+#     "Smooth_Muscular" = "#332288",   # blu-viola scuro
+#     "Tenocyte" = "#A3E635"           # verde lime
+# )
+# 
+# stat1 <- plotCoords(sham_b1, annotate = "cell_type", point_size = 0.01) +
+#     scale_color_manual(values = your_color_vector) +
+#     theme(
+#       legend.key.width = unit(0.5, "lines"),
+#       legend.key.height = unit(1, "lines")
+#     )
+# ggsave("shamb1_singleR.png", width = 10, height = 8, dpi = 300)
+
+
+```
+
+#Grafici per tutti i campioni
+```{r}
+
+for (spe_name in names(spe_list)) {
+  spe <- spe_list[[spe_name]]
+  
+your_color_vector <- c(
+    "Endothelial" = "#0072B2",       # blu vivo
+    "FAPs" = "#009E73",              # verde vivo
+    "Immune_Cells" = "#D55E00",      # arancione-rosso
+    "MuSC" = "#E69F00",              # arancione
+    "Myonuclei_IIb" = "#CC79A7",     # magenta
+    "Myonuclei_IIx" = "#56B4E9",     # azzurro chiaro
+    "Myonuclei_IIx_IIa" = "#F0E442", # giallo
+    "Myonuclei_IIx_IIb" = "#9B59B6", # viola chiaro
+    "Myonuclei_MTJ" = "#0099B4",     # turchese
+    "Myonuclei_NMJ" = "#DDAA33",     # senape
+    "Myonuclei_Trim63" = "#CC3311",  # rosso scuro
+    "Nervous_System" = "#44AA99",    # verde acqua
+    "Pericyte" = "#AA4499",          # viola/rosa
+    "Smooth_Muscular" = "#332288",   # blu-viola scuro
+    "Tenocyte" = "#A3E635"           # verde lime
+)
+
+stat1 <- plotCoords(spe, annotate = "cell_type", point_size = 0.01) +
+    scale_color_manual(values = your_color_vector) +
+    theme(
+      legend.key.width = unit(0.5, "lines"),
+      legend.key.height = unit(1, "lines")
+    )
+
+ggsave(paste0(spe_name, "_dec2.png"), stat1, width = 10, height = 8, dpi = 300)
+}
+  
+```
+
+#Barplot to show cell type proportions for each sample
+```{r}
+
+names(spe_list) <- c("c26foxO_b1","sham_b1","c26STAT3_b1","c26SMAD23_b2","c26murf1_b2","c26_b2",
+                     "sham_b3","c26murf1_b3","c26STAT3_b3","c26_b4","c26foxO_b4",
+                     "c26SMAD23_b4","c26SMAD23_b5","c26STAT3_b5","c26murf1_b5",
+                     "c26_b6","sham_b6","c26foxO_b6","c26SMAD23_b9","c26foxO_b9","c26murf1_b9")
+
+prop_df <- lapply(names(spe_list), function(name) {
+  spe <- spe_list[[name]]
+  tab <- table(spe$cell_type)
+  prop <- prop.table(tab)
+  data.frame(
+    sample = name,
+    cell_type = names(prop),
+    proportion = as.numeric(prop)
+  )
+}) |> bind_rows()
+
+your_color_vector <- c(
+    "Endothelial" = "#0072B2",       # blu vivo
+    "FAPs" = "#009E73",              # verde vivo
+    "Immune_Cells" = "#D55E00",      # arancione-rosso
+    "MuSC" = "#E69F00",              # arancione
+    "Myonuclei_IIb" = "#CC79A7",     # magenta
+    "Myonuclei_IIx" = "#56B4E9",     # azzurro chiaro
+    "Myonuclei_IIx_IIa" = "#F0E442", # giallo
+    "Myonuclei_IIx_IIb" = "#9B59B6", # viola chiaro
+    "Myonuclei_MTJ" = "#0099B4",     # turchese
+    "Myonuclei_NMJ" = "#DDAA33",     # senape
+    "Myonuclei_Trim63" = "#CC3311",  # rosso scuro
+    "Nervous_System" = "#44AA99",    # verde acqua
+    "Pericyte" = "#AA4499",          # viola/rosa
+    "Smooth_Muscular" = "#332288",   # blu-viola scuro
+    "Tenocyte" = "#A3E635"           # verde lime
+)
+
+ggplot(prop_df, aes(x = sample, y = proportion, fill = cell_type)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = your_color_vector) +
+  theme_minimal() +
+  labs(
+    title = "Proporzioni dei tipi cellulari per campione",
+    x = "Campione (spe_list)",
+    y = "Proporzione",
+    fill = "Tipo Cellulare"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggsave("cell_type_proportions_8bin.png", width = 10, height = 6, dpi = 300)
+
+```
+
+

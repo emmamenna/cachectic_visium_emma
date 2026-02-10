@@ -45,7 +45,6 @@ save(prot,file="proteomic_se.rds")
 
 ```
 
-#Analisi esplorative
 ```{r}
 load("~/proteomic_se.rds")
 mat <- assay(prot, "counts")
@@ -53,26 +52,59 @@ counts_num <- apply(mat, 2, function(x) as.numeric(as.character(x)))
 rownames(counts_num) <- rownames(mat)
 colnames(counts_num) <- colnames(mat)
 assay(prot, "counts", withDimnames = FALSE) <- counts_num
-boxplot(assay(prot, "counts"))
+#boxplot(assay(prot, "counts"))
 #non serve fare il log
 
-#pca
+```
+
+#PCA
+```{r}
 pca <- prcomp(t(assay(prot, "counts")), scale. = TRUE)
 col <- as.factor(colData(prot)$condition)
-plot(pca$x[,1], pca$x[,2], col = col, pch = 19)
+png("pca_condition.png", width = 800, height = 600, res = 120)
+plot(pca$x[,1], pca$x[,2], col = col, pch = 19, main="PCA by condition")
 legend("topright", legend = unique(col), col = unique(col), pch = 19)
+dev.off()
 
 col <- as.factor(colData(prot)$illness)
-plot(pca$x[,1], pca$x[,2], col = col, pch = 19)
+png("pca_disease.png", width = 800, height = 600, res = 120)
+plot(pca$x[,1], pca$x[,2], col = col, pch = 19,, main="PCA by disease type")
 legend("topright", legend = unique(col), col = unique(col), pch = 19)
+dev.off()
 
 col <- as.factor(colData(prot)$sex)
-plot(pca$x[,1], pca$x[,2], col = col, pch = 19)
+png("pca_sex.png", width = 800, height = 600, res = 120)
+plot(pca$x[,1], pca$x[,2], col = col, pch = 19, main="PCA by sex")
 legend("topright", legend = unique(col), col = unique(col), pch = 19)
+dev.off()
+
+```
+
+#T-SNE
+```{r}
+library(Rtsne)
+set.seed(123)
+tsne_res <- Rtsne(pca$x[, 1:10], perplexity = 10, check_duplicates = FALSE)
+
+col <- as.factor(colData(prot)$condition)
+png("tsne_condition.png", width = 800, height = 600, res = 120)
+plot(tsne_res$Y[,1], tsne_res$Y[,2], col = col, pch = 19, xlab = "t-SNE1", ylab = "t-SNE2",
+     main="tSNE by condition")
+legend("topright", legend = levels(col), col = seq_along(levels(col)), pch = 19)
+dev.off()
+
+col <- as.factor(colData(prot)$illness)
+png("tsne_disease.png", width = 800, height = 600, res = 120)
+plot(tsne_res$Y[,1], tsne_res$Y[,2], col = col, pch = 19, xlab = "t-SNE1", ylab = "t-SNE2",
+     main="tSNE by disease type")
+legend("topright", legend = levels(col), col = seq_along(levels(col)), pch = 19)
+dev.off()
 
 ```
 
 #DEG - modello semplice con limma
+Nell'output
+B: Log-odds of differential expression, related to the adjusted p-value.
 ```{r}
 #filtering proteins? it's bulk and I have 950 proteins so I wouldn't.
 
@@ -96,15 +128,15 @@ top_PreCac_vs_Control <- topTable(fit, coef = "PreCac_vs_Control",p.value = 0.05
 top_Cac_vs_PreCac <- topTable(fit, coef = "Cac_vs_PreCac",p.value = 0.05, number = Inf) #176
 top_Cac_vs_Control <- topTable(fit, coef = "Cac_vs_Control",p.value = 0.05, number = Inf)  #248
 
-wb <- createWorkbook()
+# wb <- createWorkbook()
 
-addWorksheet(wb, "PreCac_vs_Control")
-writeData(wb, "PreCac_vs_Control", top_PreCac_vs_Control)
-addWorksheet(wb, "Cac_vs_PreCac")
-writeData(wb, "Cac_vs_PreCac", top_Cac_vs_PreCac)
-addWorksheet(wb, "Cac_vs_Control")
-writeData(wb, "Cac_vs_Control", top_Cac_vs_Control)
-saveWorkbook(wb, file = "limma_results.xlsx", overwrite = TRUE)
+# addWorksheet(wb, "PreCac_vs_Control")
+# writeData(wb, "PreCac_vs_Control", top_PreCac_vs_Control)
+# addWorksheet(wb, "Cac_vs_PreCac")
+# writeData(wb, "Cac_vs_PreCac", top_Cac_vs_PreCac)
+# addWorksheet(wb, "Cac_vs_Control")
+# writeData(wb, "Cac_vs_Control", top_Cac_vs_Control)
+# saveWorkbook(wb, file = "limma_results.xlsx", overwrite = TRUE)
 
 ```
 
@@ -134,119 +166,69 @@ fit <- contrasts.fit(fit, contrasts = contr.matrix)
 fit <- eBayes(fit)
 
 top_Cac_vs_PreCac_CRC <- topTable(fit, coef = "Cac_vs_PreCac_CRC",p.value = 0.05, number = Inf) #11
+top_Cac_vs_PreCac_CRC$prot_name <- rownames(top_Cac_vs_PreCac_CRC)
 top_Cac_vs_PreCac_pan <- topTable(fit, coef = "Cac_vs_PreCac_pan",p.value = 0.05, number = Inf) #87
+top_Cac_vs_PreCac_pan$prot_name <- rownames(top_Cac_vs_PreCac_pan)
 top_Cac_vs_Control_CRC <- topTable(fit, coef = "Cac_vs_Control_CRC",p.value = 0.05, number = Inf) #18
+top_Cac_vs_Control_CRC$prot_name <- rownames(top_Cac_vs_Control_CRC)
 top_Cac_vs_Control_pan <- topTable(fit, coef = "Cac_vs_Control_pan",p.value = 0.05, number = Inf) #338
+top_Cac_vs_Control_pan$prot_names <- rownames(top_Cac_vs_Control_pan)
 top_PreCac_vs_Control_CRC <- topTable(fit, coef = "PreCac_vs_Control_CRC",p.value = 0.05, number = Inf) #41
+top_PreCac_vs_Control_CRC$prot_name <- rownames(top_PreCac_vs_Control_CRC)
 top_PreCac_vs_Control_pan <- topTable(fit, coef = "PreCac_vs_Control_pan",p.value = 0.05, number = Inf) #41
+top_PreCac_vs_Control_pan$prot_name <- rownames(top_PreCac_vs_Control_pan)
+
+# wb <- createWorkbook()
+# addWorksheet(wb, "Cac_vs_PreCac_CRC")
+# writeData(wb, "Cac_vs_PreCac_CRC", top_Cac_vs_PreCac_CRC)
+# addWorksheet(wb, "Cac_vs_PreCac_pan")
+# writeData(wb, "Cac_vs_PreCac_pan", top_Cac_vs_PreCac_pan)
+# addWorksheet(wb, "Cac_vs_Control_CRC")
+# writeData(wb, "Cac_vs_Control_CRC", top_Cac_vs_Control_CRC)
+# addWorksheet(wb, "Cac_vs_Control_pan")
+# writeData(wb, "Cac_vs_Control_pan", top_Cac_vs_Control_pan)
+# addWorksheet(wb, "PreCac_vs_Control_CRC")
+# writeData(wb, "PreCac_vs_Control_CRC", top_PreCac_vs_Control_CRC)
+# addWorksheet(wb, "PreCac_vs_Control_pan")
+# writeData(wb, "PreCac_vs_Control_pan", top_PreCac_vs_Control_pan)
+# saveWorkbook(wb, file = "limma_pairwise.xlsx", overwrite = TRUE)
 
 #confronto unico -------------------------------------------------------------------------------
 #fa la media tra i due cac e sottrae la media tra i due precac
-Cac_vs_PreCac <- c(
-  Control      = 0,
-  Cac_CRC      =  1/2,
-  PreCac_CRC   = -1/2,
-  Cac_pan      =  1/2,
-  PreCac_pan   = -1/2,
-  sexM = 0
-)
 
-Cac_vs_Control <- c(
-  Control      = -1,
-  Cac_CRC      =  1/2,
-  PreCac_CRC   =  0,
-  Cac_pan      =  1/2,
-  PreCac_pan   =  0,
-  sexM = 0
-)
-
-PreCac_vs_Control <- c(
-  Control      = -1,
-  Cac_CRC      =  0,
-  PreCac_CRC   =  1/2,
-  Cac_pan      =  0,
-  PreCac_pan   =  1/2,
-  sexM = 0
-)
-
-contrast_matrix <- cbind(
-  Cac_vs_PreCac     = Cac_vs_PreCac,
-  Cac_vs_Control    = Cac_vs_Control,
-  PreCac_vs_Control = PreCac_vs_Control
-)
-
-fit2 <- contrasts.fit(fit, contrast_matrix)
-fit2 <- eBayes(fit2, trend = TRUE)
-topTable(fit2, coef = "Cac_vs_PreCac",p.value = 0.05, number = Inf) #53
-topTable(fit2, coef = "Cac_vs_Control",p.value = 0.05, number = Inf) #134
-topTable(fit2, coef = "PreCac_vs_Control",p.value = 0.05, number = Inf) #50
-
-#Eventualmente si può fare anche una media pesata per paziente
-
-```
-
-#Per TESTARE (non solo correggere) anche per la variabile sex farei direttamente due modelli separati
-#anche se perdo potenza
-#se no devo fare un'interazione a 3
-```{r}
-#Creo un'unica variabile per condition e illness perché il livello "control" che hanno è lo stesso.
 cond_x_dis <- interaction(prot$condition, prot$illness, drop = TRUE)
 levels(cond_x_dis) <- c("Control","Cac_CRC","PreCac_CRC","Cac_pan","PreCac_pan")
 table(cond_x_dis)
 sex <- prot$sex
-
-#SOLO MASCHI ----------------------------------------------------------------------------------------------
-prot_m <- prot[,prot$sex == "M"]
-cond_x_dis_m <- cond_x_dis[prot$sex == "M"]
-design <- model.matrix(~ 0 + cond_x_dis_m)
-y <- assay(prot_m,"counts")
+design <- model.matrix(~ 0 + cond_x_dis + sex)
+y <- assay(prot,"counts")
 fit <- lmFit(y, design)
 
-#confronti separati ----------------------------------------------------------------------------------------
-contr.matrix <- makeContrasts(
-  Cac_vs_PreCac_CRC = cond_x_disCac_CRC - cond_x_disPreCac_CRC,
-  Cac_vs_PreCac_pan = cond_x_disCac_pan - cond_x_disPreCac_pan,
-  Cac_vs_Control_CRC = cond_x_disCac_CRC - cond_x_disControl,
-  Cac_vs_Control_pan = cond_x_disCac_pan - cond_x_disControl,
-  PreCac_vs_Control_CRC = cond_x_disPreCac_CRC- cond_x_disControl,
-  PreCac_vs_Control_pan = cond_x_disPreCac_pan - cond_x_disControl,
-  levels = design
-)
-contr.matrix
-fit <- contrasts.fit(fit, contrasts = contr.matrix)
-fit <- eBayes(fit)
-
-top_Cac_vs_PreCac_CRC <- topTable(fit, coef = "Cac_vs_PreCac_CRC",p.value = 0.05, number = Inf) 
-top_Cac_vs_PreCac_pan <- topTable(fit, coef = "Cac_vs_PreCac_pan",p.value = 0.05, number = Inf) 
-top_Cac_vs_Control_CRC <- topTable(fit, coef = "Cac_vs_Control_CRC",p.value = 0.05, number = Inf)
-top_Cac_vs_Control_pan <- topTable(fit, coef = "Cac_vs_Control_pan",p.value = 0.05, number = Inf)
-top_PreCac_vs_Control_CRC <- topTable(fit, coef = "PreCac_vs_Control_CRC",p.value = 0.05, number = Inf)
-top_PreCac_vs_Control_pan <- topTable(fit, coef = "PreCac_vs_Control_pan",p.value = 0.05, number = Inf) 
-
-#confronto unico -------------------------------------------------------------------------------
-#fa la media tra i due cac e sottrae la media tra i due precac
 Cac_vs_PreCac <- c(
-  Control      = 0,
-  Cac_CRC      =  1/2,
-  PreCac_CRC   = -1/2,
-  Cac_pan      =  1/2,
-  PreCac_pan   = -1/2
+  cond_x_disControl = 0,
+  cond_x_disCac_CRC = 1/2,
+  cond_x_disPreCac_CRC = -1/2,
+  cond_x_disCac_pan = 1/2,
+  cond_x_disPreCac_pan = -1/2,
+  sexM = 0
 )
 
 Cac_vs_Control <- c(
-  Control      = -1,
-  Cac_CRC      =  1/2,
-  PreCac_CRC   =  0,
-  Cac_pan      =  1/2,
-  PreCac_pan   =  0
+  cond_x_disControl = -1,
+  cond_x_disCac_CRC = 1/2,
+  cond_x_disPreCac_CRC = 0,
+  cond_x_disCac_pan = 1/2,
+  cond_x_disPreCac_pan = 0,
+  sexM = 0
 )
 
 PreCac_vs_Control <- c(
-  Control      = -1,
-  Cac_CRC      =  0,
-  PreCac_CRC   =  1/2,
-  Cac_pan      =  0,
-  PreCac_pan   =  1/2
+  cond_x_disControl = -1,
+  cond_x_disCac_CRC = 0,
+  cond_x_disPreCac_CRC = 1/2,
+  cond_x_disCac_pan = 0,
+  cond_x_disPreCac_pan = 1/2,
+  sexM = 0
 )
 
 contrast_matrix <- cbind(
@@ -257,11 +239,235 @@ contrast_matrix <- cbind(
 
 fit2 <- contrasts.fit(fit, contrast_matrix)
 fit2 <- eBayes(fit2, trend = TRUE)
-topTable(fit2, coef = "Cac_vs_PreCac",p.value = 0.05, number = Inf)
-topTable(fit2, coef = "Cac_vs_Control",p.value = 0.05, number = Inf)
-topTable(fit2, coef = "PreCac_vs_Control",p.value = 0.05, number = Inf)
+top_Cac_vs_PreCac <- topTable(fit2, coef = "Cac_vs_PreCac", p.value = 0.05, number = Inf) #53
+top_Cac_vs_PreCac$prot_names <- rownames(top_Cac_vs_PreCac)
+top_Cac_vs_Control <- topTable(fit2, coef = "Cac_vs_Control", p.value = 0.05, number = Inf) #134
+top_Cac_vs_Control$prot_names <- rownames(top_Cac_vs_Control)
+top_PreCac_vs_Control <- topTable(fit2, coef = "PreCac_vs_Control", p.value = 0.05, number = Inf) #50
+top_PreCac_vs_Control$prot_names <- rownames(top_PreCac_vs_Control)
 
-#Eventualmente si può fare anche una media pesata per paziente
+wb <- createWorkbook()
+addWorksheet(wb, "PreCac_vs_Control")
+writeData(wb, "PreCac_vs_Control", top_PreCac_vs_Control)
+addWorksheet(wb, "Cac_vs_PreCac")
+writeData(wb, "Cac_vs_PreCac", top_Cac_vs_PreCac)
+addWorksheet(wb, "Cac_vs_Control")
+writeData(wb, "Cac_vs_Control", top_Cac_vs_Control)
+saveWorkbook(wb, file = "limma_average_effects.xlsx", overwrite = TRUE)
+
+```
+
+#GENE SET ENRICHMENT ANALYSIS
+```{r}
+library(muscat)
+library(org.Hs.eg.db)
+library(clusterProfiler)
+
+# #devo prendere i logFC di tutti
+# top_Cac_vs_Control_pan <- topTable(fit, coef = "Cac_vs_Control_pan", p.value = 1, number = Inf)
+# top_Cac_vs_Control_pan$prot_name <- rownames(top_Cac_vs_Control_pan)
+# dim(top_Cac_vs_Control_pan)
+# #trovo i nomi dei geni corrispondenti alle proteine
+# symbols <- sub("~.*", "", top_Cac_vs_PreCac_CRC$prot_name)
+# mapped_ids <- bitr(symbols, fromType = "SYMBOL", toType  = "ENTREZID", OrgDb = org.Hs.eg.db)
+# gene_list <- top_Cac_vs_PreCac_CRC$logFC
+# names(gene_list) <- mapped_ids$ENTREZID
+# gene_list <- na.omit(gene_list)
+# gene_list <- gene_list[!is.na(names(gene_list))]
+# gene_list = sort(gene_list, decreasing = TRUE)
+# head(gene_list)
+# length(gene_list)
+# 
+# gsea_sig <- gseKEGG(geneList = gene_list, organism = "hsa", 
+#             pvalueCutoff = 0.1, verbose = FALSE)
+# gsea_sig@result
+
+#NB: nulla da fare anche con GO
+
+```
+
+#GSA NON ENRICHMENT ...
+```{r}
+library(writexl)
+library(muscat)
+library(org.Hs.eg.db)
+library(clusterProfiler)
+set.seed(6335)
+#CONTROLLA CHE I CONFRONTI SIANO DEFINITI DAL CODICE DEI DEG
+
+#Cachetici vs Controlli - pancreas
+symbols <- sub("~.*", "", top_Cac_vs_Control_pan$prot_name)
+genes <- bitr(symbols, fromType = "SYMBOL", toType  = "ENTREZID", OrgDb = org.Hs.eg.db)
+genes <- genes[!is.na(genes$ENTREZID), ]
+kegg_gsa <- enrichKEGG(gene = genes$ENTREZID, organism = 'hsa', pvalueCutoff = 0.05)
+kegg_df <- as.data.frame(kegg_gsa@result)
+sig_cac_ctrl_pan <- kegg_df[kegg_df$p.adjust < 0.05, ]
+all_entrez <- unique(unlist(strsplit(sig_cac_ctrl_pan$geneID, "/")))
+id_map <- bitr(
+  all_entrez,
+  fromType = "ENTREZID",
+  toType   = "SYMBOL",
+  OrgDb    = org.Hs.eg.db
+)
+entrez2symbol <- setNames(id_map$SYMBOL, id_map$ENTREZID)
+convert_core_enrichment <- function(entrez_string, lookup) {
+  entrez_ids <- strsplit(entrez_string, "/")[[1]]
+  symbols <- lookup[entrez_ids]
+  symbols <- symbols[!is.na(symbols)]
+  paste(symbols, collapse = "/")
+}
+
+sig_cac_ctrl_pan$gene_symbols <- sapply(
+  sig_cac_ctrl_pan$geneID,
+  convert_core_enrichment,
+  lookup = entrez2symbol
+)
+write_xlsx(sig_cac_ctrl_pan , path = "sig_cac_ctrl_pan.xlsx")
+
+#Cachetici vs Controlli - CRC
+# symbols <- sub("~.*", "", top_Cac_vs_Control_CRC$prot_name)
+# length(symbols)
+# genes <- bitr(symbols, fromType = "SYMBOL", toType  = "ENTREZID", OrgDb = org.Hs.eg.db)
+# genes <- genes[!is.na(genes$ENTREZID), ]
+# kegg_gsa <- enrichKEGG(gene = genes$ENTREZID, organism = 'hsa', pvalueCutoff = 0.05)
+# kegg_df <- as.data.frame(kegg_gsa@result)
+# sig_cac_ctrl_crc <- kegg_df[kegg_df$p.adjust < 0.05, ]
+# sig_cac_ctrl_crc
+
+#PreCachetici vs Controlli - pancreas
+# symbols <- sub("~.*", "", top_PreCac_vs_Control_pan$prot_name)
+# length(symbols)
+# genes <- bitr(symbols, fromType = "SYMBOL", toType  = "ENTREZID", OrgDb = org.Hs.eg.db)
+# genes <- genes[!is.na(genes$ENTREZID), ]
+# kegg_gsa <- enrichKEGG(gene = genes$ENTREZID, organism = 'hsa', pvalueCutoff = 0.05)
+# kegg_df <- as.data.frame(kegg_gsa@result)
+# sig_precac_ctrl_pan <- kegg_df[kegg_df$p.adjust < 0.05, ]
+# sig_precac_ctrl_pan
+
+#PreCachetici vs Controlli - CRC
+# symbols <- sub("~.*", "", top_PreCac_vs_Control_CRC$prot_name)
+# length(symbols)
+# genes <- bitr(symbols, fromType = "SYMBOL", toType  = "ENTREZID", OrgDb = org.Hs.eg.db)
+# genes <- genes[!is.na(genes$ENTREZID), ]
+# kegg_gsa <- enrichKEGG(gene = genes$ENTREZID, organism = 'hsa', pvalueCutoff = 0.05)
+# kegg_df <- as.data.frame(kegg_gsa@result)
+# sig_precac_ctrl_crc <- kegg_df[kegg_df$p.adjust < 0.05, ]
+# sig_precac_ctrl_crc
+
+#Cachetici vs PreCachetici - pancreas
+symbols <- sub("~.*", "", top_Cac_vs_PreCac_pan$prot_name)
+length(symbols)
+genes <- bitr(symbols, fromType = "SYMBOL", toType  = "ENTREZID", OrgDb = org.Hs.eg.db)
+genes <- genes[!is.na(genes$ENTREZID), ]
+kegg_gsa <- enrichKEGG(gene = genes$ENTREZID, organism = 'hsa', pvalueCutoff = 0.05)
+kegg_df <- as.data.frame(kegg_gsa@result)
+sig_cac_precac_pan <- kegg_df[kegg_df$p.adjust < 0.05, ]
+all_entrez <- unique(unlist(strsplit(sig_cac_precac_pan$geneID, "/")))
+id_map <- bitr(
+  all_entrez,
+  fromType = "ENTREZID",
+  toType   = "SYMBOL",
+  OrgDb    = org.Hs.eg.db
+)
+entrez2symbol <- setNames(id_map$SYMBOL, id_map$ENTREZID)
+sig_cac_precac_pan$gene_symbols <- sapply(
+  sig_cac_precac_pan$geneID,
+  convert_core_enrichment,
+  lookup = entrez2symbol
+)
+write_xlsx(sig_cac_precac_pan , path = "sig_cac_precac_pan.xlsx")
+
+#Cachetici vs PreCachetici - CRC
+symbols <- sub("~.*", "", top_Cac_vs_PreCac_CRC$prot_name)
+length(symbols)
+genes <- bitr(symbols, fromType = "SYMBOL", toType  = "ENTREZID", OrgDb = org.Hs.eg.db)
+genes <- genes[!is.na(genes$ENTREZID), ]
+kegg_gsa <- enrichKEGG(gene = genes$ENTREZID, organism = 'hsa', pvalueCutoff = 0.05)
+kegg_df <- as.data.frame(kegg_gsa@result)
+sig_cac_precac_crc <- kegg_df[kegg_df$p.adjust < 0.05, ]
+all_entrez <- unique(unlist(strsplit(sig_cac_precac_crc$geneID, "/")))
+id_map <- bitr(
+  all_entrez,
+  fromType = "ENTREZID",
+  toType   = "SYMBOL",
+  OrgDb    = org.Hs.eg.db
+)
+entrez2symbol <- setNames(id_map$SYMBOL, id_map$ENTREZID)
+sig_cac_precac_crc$gene_symbols <- sapply(
+  sig_cac_precac_crc$geneID,
+  convert_core_enrichment,
+  lookup = entrez2symbol
+)
+write_xlsx(sig_cac_precac_crc , path = "sig_cac_precac_crc.xlsx")
+
+```
+#con GO
+```{r}
+library(writexl)
+library(muscat)
+library(org.Hs.eg.db)
+library(clusterProfiler)
+set.seed(6335)
+#CONTROLLA CHE I CONFRONTI SIANO DEFINITI DAL CODICE DEI DEG
+
+#Cachetici vs Controlli - pancreas
+symbols <- sub("~.*", "", top_Cac_vs_Control_pan$prot_name)
+genes <- symbols[!is.na(symbols)]
+go_gsea <- enrichGO(gene = genes, OrgDb = org.Hs.eg.db, keyType = "SYMBOL", ont = "BP",
+                        pvalueCutoff = 0.05, pAdjustMethod = "BH")
+go_df <- as.data.frame(go_gsea@result)
+sig_cac_ctrl_pan <- go_df[go_df$p.adjust < 0.05, ]
+sig_cac_ctrl_pan
+write_xlsx(sig_cac_ctrl_pan , path = "sig_cac_ctrl_pan_go.xlsx")
+
+#Cachetici vs Controlli - CRC
+symbols <- sub("~.*", "", top_Cac_vs_Control_CRC$prot_name)
+genes <- symbols[!is.na(symbols)]
+go_gsea <- enrichGO(gene = genes, OrgDb = org.Hs.eg.db, keyType = "SYMBOL", ont = "BP",
+                        pvalueCutoff = 0.05, pAdjustMethod = "BH")
+go_df <- as.data.frame(go_gsea@result)
+sig_cac_ctrl_crc <- go_df[go_df$p.adjust < 0.05, ]
+sig_cac_ctrl_crc
+write_xlsx(sig_cac_ctrl_crc , path = "sig_cac_ctrl_crc_go.xlsx")
+
+#PreCachetici vs Controlli - pancreas
+symbols <- sub("~.*", "", top_PreCac_vs_Control_pan$prot_name)
+genes <- symbols[!is.na(symbols)]
+go_gsea <- enrichGO(gene = genes, OrgDb = org.Hs.eg.db, keyType = "SYMBOL", ont = "BP",
+                        pvalueCutoff = 0.05, pAdjustMethod = "BH")
+go_df <- as.data.frame(go_gsea@result)
+sig_precac_ctrl_pan <- go_df[go_df$p.adjust < 0.05, ]
+sig_precac_ctrl_pan
+write_xlsx(sig_precac_ctrl_pan , path = "sig_precac_ctrl_pan_go.xlsx")
+
+#PreCachetici vs Controlli - CRC
+symbols <- sub("~.*", "", top_PreCac_vs_Control_CRC$prot_name)
+genes <- symbols[!is.na(symbols)]
+go_gsea <- enrichGO(gene = genes, OrgDb = org.Hs.eg.db, keyType = "SYMBOL", ont = "BP",
+                        pvalueCutoff = 0.05, pAdjustMethod = "BH")
+go_df <- as.data.frame(go_gsea@result)
+sig_precac_ctrl_crc <- go_df[go_df$p.adjust < 0.05, ]
+sig_precac_ctrl_crc
+write_xlsx(sig_precac_ctrl_crc , path = "sig_precac_ctrl_crc_go.xlsx")
+
+#Cachetici vs PreCachetici - pancreas
+symbols <- sub("~.*", "", top_Cac_vs_PreCac_pan$prot_name)
+genes <- symbols[!is.na(symbols)]
+go_gsea <- enrichGO(gene = genes, OrgDb = org.Hs.eg.db, keyType = "SYMBOL", ont = "BP",
+                        pvalueCutoff = 0.05, pAdjustMethod = "BH")
+go_df <- as.data.frame(go_gsea@result)
+sig_cac_precac_pan <- go_df[go_df$p.adjust < 0.05, ]
+sig_cac_precac_pan
+write_xlsx(sig_cac_precac_pan, path = "sig_cac_precac_pan_go.xlsx")
+
+#Cachetici vs PreCachetici - CRC
+# symbols <- sub("~.*", "", top_Cac_vs_PreCac_CRC$prot_name)
+# genes <- symbols[!is.na(symbols)]
+# go_gsea <- enrichGO(gene = genes, OrgDb = org.Hs.eg.db, keyType = "SYMBOL", ont = "BP",
+#                         pvalueCutoff = 0.05, pAdjustMethod = "BH")
+# go_df <- as.data.frame(go_gsea@result)
+# sig_cac_precac_crc <- go_df[go_df$p.adjust < 0.05, ]
+# sig_cac_precac_crc
 
 ```
 

@@ -1,0 +1,300 @@
+---
+title: "alternative_deconvolutions"
+output: html_document
+date: "2025-12-09"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(STdeconvolve)
+library(SpatialExperiment)
+library(SMART)
+library(readxl)
+library(ggspavis)
+```
+
+#ScType
+ScType workflow consists of the following steps:
+Input data quality control (as implemented in Seurat pipeline, latest version) to visually explore the data, including:
+Cell- based quality control (e.g. removing cells with unexpectedly high counts)
+Gene- based quality control (i.e. subsetting highly-variable genes)
+Data normalization and scaling (The default normalization is done using SCTransform, but other methods, such as log-normalization are available)
+Data clustering based on highly variable genes (default is Louvain clustering based on a shared nearest neighbor graph, but many other options are available)
+Differential expression analysis and cell marker identification.
+Automatic cell type identification and quantification
+Visualization of results (multiple options are available)
+```{r}
+#non è scaricabile il pacchetto
+# lapply(c("dplyr", "Seurat", "HGNChelper", "openxlsx"), library, character.only = TRUE)
+# source("https://raw.githubusercontent. com/IanevskiAleksandr/sc-type/master/R/gene_sets_prepare.R")
+# source("https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/R/sctype_score_. R")
+# source("https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/R/gene_sets_prepare.R")
+# source("https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/R/sctype_score_.R")
+
+load("~/spe_list_8bin.RData")
+spe <- spe_list$blocco1_sham
+
+#converti a Seurat
+library(Seurat)
+counts_mat <- as.matrix(assay(spe, "X"))
+cell_metadata <- as.data.frame(colData(spe))
+seu <- CreateSeuratObject(
+  counts = counts_mat,
+  meta.data = cell_metadata
+)
+save(seu,file="sham_b1.RData")
+
+#HACTAR
+
+#controllo qualità e normalizzazione
+# seu<- subset(seu, subset = nFeature_RNA > 200 & nFeature_RNA < 2500) 
+# plot(density(Matrix::colSums(seu@assays$RNA@layers$counts > 0)),xlim=c(0,100))
+#intanto non tolgo nulla, al massimo cmq meglio togliere con gli UMI
+
+seu <- NormalizeData(seu, normalization.method = "LogNormalize", scale.factor = 10000)
+seu <- FindVariableFeatures(seu, selection.method = "vst", nfeatures = 5000) #alzo un po'
+
+# scale and run PCA
+seu <- ScaleData(seu, features = rownames(seu))
+seu <- RunPCA(seu, features = VariableFeatures(object = seu))
+
+# Check number of PC components (we selected 10 PCs for downstream analysis, based on Elbow plot)
+# ElbowPlot(seu)
+
+# cluster and visualize
+seu <- FindNeighbors(seu, dims = 1:10)
+seu <- FindClusters(seu, resolution = 0.8)
+seu <- RunUMAP(seu, dims = 1:10)
+
+load("~/seu.RData")
+DimPlot(seu, reduction = "umap")
+#come previsto, fa schifo
+
+```
+
+#STdeconvolve
+```{r}
+load("~/spe_list_8bin.RData")
+spe <- spe_list$blocco1_sham
+## remove pixels with too few genes
+?cleanCounts
+X_mat <- as.matrix(assay(spe, "X"))
+counts <- cleanCounts(counts = X_mat, 
+                      min.lib.size = 50, #proviamo intanto così
+                      min.reads = 1,
+                      min.detected = 1,
+                      verbose = TRUE)
+
+?restrictCorpus
+#finds hvg
+corpus <- restrictCorpus(counts,
+                         removeAbove = 1.0,
+                         removeBelow = 0.05,
+                         alpha = 0.05,
+                         plot = TRUE,
+                         verbose = TRUE)
+#ne rimangono solo 70 così, bah
+
+# STdeconvolve then applies latent Dirichlet allocation (LDA), a generative statistical model
+# commonly used in natural language processing, to discover K latent cell-types.
+# STdeconvolve fits a range of LDA models to inform the choice of an optimal K.
+## Note: the input corpus needs to be an integer count matrix of pixels x genes
+ldas <- fitLDA(t(as.matrix(corpus)), Ks = seq(2, 9, by = 1),
+               perc.rare.thresh = 0.05,
+               plot=TRUE,
+               verbose=TRUE)
+## select model with minimum perplexity
+optLDA <- optimalModel(models = ldas, opt = "min")
+#k=2
+#fa schifo
+
+
+```
+
+#SMART
+Provo a fare con i marker aggiornati?
+```{r}
+devtools::install_github("yyolanda/SMART")
+
+load("~/spe_list_8bin.RData")
+spe <- spe_list$blocco1_sham
+counts = t(counts(spe))
+markers_list <- readRDS("~/marker_genes_list_singleR_annot.rds")
+
+#Controllo qualità (stessa soglia di RCTD)
+counts <- counts[rowSums(counts) > 15,]
+counts <- counts[ ,colSums(counts) > 0]
+#per dopo
+spe <- spe[,colSums(counts(spe))>15]
+spe <- spe[rowSums(counts(spe))>0,]
+
+#controlla quali markers non sono espressi
+markers_list <- lapply(markers_list, function(v) v[v %in% colnames(counts)])
+
+base_res <- SMART_base(stData = counts,
+                       markerGs = markers_list, 
+                       noMarkerCts = 0, #num. tipi cell. senza markers
+                       #outDir='SMART_results',
+                       seed=8001)
+
+cell_type <- apply(base_res$ct_proportions, 1, function(x) colnames(base_res$ct_proportions)[which.max(x)])
+table(cell_type)
+base_res$cell_type <- cell_type
+spe$cell_type <- base_res$cell_type
+
+your_color_vector <- c(
+    "Endothelial" = "#0072B2",       # blu vivo
+    "FAPs" = "#009E73",              # verde vivo
+    "Immune_Cells" = "#D55E00",      # arancione-rosso
+    "MuSC" = "#E69F00",              # arancione
+    "Myonuclei_IIb" = "#CC79A7",     # magenta
+    "Myonuclei_IIx" = "#56B4E9",     # azzurro chiaro
+    "Myonuclei_IIx_IIa" = "#F0E442", # giallo
+    "Myonuclei_IIx_IIb" = "#9B59B6", # viola chiaro
+    "Myonuclei_MTJ" = "#0099B4",     # turchese
+    "Myonuclei_NMJ" = "#DDAA33",     # senape
+    "Myonuclei_Trim63" = "#CC3311",  # rosso scuro
+    "Nervous_System" = "#44AA99",    # verde acqua
+    "Pericyte" = "#AA4499",          # viola/rosa
+    "Smooth_Muscular" = "#332288",   # blu-viola scuro
+    "Tenocyte" = "#A3E635"           # verde lime
+)
+
+stat1 <- plotCoords(spe, annotate = "cell_type", point_size = 0.01) +
+    scale_color_manual(values = your_color_vector) +
+    theme(
+      legend.key.width = unit(0.5, "lines"),
+      legend.key.height = unit(1, "lines")
+      )
+
+
+```
+
+#SpiceMix (python)
+```{r}
+library(reticulate)
+
+# Create conda env with Python 3.10
+reticulate::conda_create("spicemix", packages = "python=3.10")
+
+# Install PyTorch: prefer conda/pytorch channels for correct wheel; example (CPU) via pip index:
+reticulate::conda_install("spicemix", packages = c("pip"), channel = "defaults")
+
+# Use pip (reticulate wraps pip) to install torch and spicemix into the conda env
+reticulate::py_install(
+  packages = c(
+    "--index-url", "https://download.pytorch.org/whl/cpu", "torch",
+    "spicemix", "anndata", "numpy", "scipy"
+  ),
+  envname = "spicemix",
+  pip = TRUE
+)
+
+```
+
+#CARD
+https://bioconductor.posit.co/packages/release/bioc/vignettes/CARDspa/inst/doc/Example_Analysis.html
+We can use CARD_refFree to do reference-free deconvolution. This function frist creat a CARDfree object and then do deconvolution. Briefly, the essential inputs are the same as the function CARD_deconvolution, except that this function does not require the single cell count and meta information matrix. Instead, it requires a markerList.
+```{r}
+library(CARDspa)
+library(RcppML)
+library(NMF)
+library(RcppArmadillo)
+library(SingleCellExperiment)
+library(SpatialExperiment)
+library(ggplot2)
+
+load("~/markers_list_mixed.RData") #lista aggiornata
+load("~/spe_list_8bin.RData")
+spe <- spe_list$blocco1_sham
+rownames(spatialCoords(spe)) <- colnames(spe)
+coords_spe <- as.data.frame(spatialCoords(spe))
+
+?CARD_refFree
+set.seed(seed = 20200107)
+CARDfree_obj <- CARD_refFree(
+    markerlist = markers_list,
+    spatial_count = counts(spe),
+    spatial_location = coords_spe,
+    mincountgene = 100,
+    mincountspot = 5
+)
+## STOP! The average number of unique marker genes for each cell
+# type is less than 20 ...
+
+```
+
+#SpatialDWLS
+Fa parte di GIOTTO
+PROBLEMA PACCHETTI PYTHON
+```{r}
+library(Giotto)
+load("~/spe_list_8bin.RData")
+sham_b1 <- spe_list$blocco1_sham
+
+my_giotto_object = createGiottoObject(raw_exprs = counts(sham_b1),
+                                      spatial_locs = as.data.frame(spatialCoords(sham_b1)))
+
+#filtering
+?filterGiotto
+my_giotto_object <- filterGiotto(gobject = my_giotto_object, 
+                                 expression_threshold = 1, #prova ad abbassare
+                                 gene_det_in_min_cells = 3, 
+                                 min_det_genes_per_cell = 10)
+
+#normalization
+?normalizeGiotto
+my_giotto_object <- normalizeGiotto(gobject = my_giotto_object, scalefactor = 6000, verbose = T)
+
+# dimension reduction
+my_giotto_object <- calculateHVG(gobject = my_giotto_object)
+my_giotto_object <- runPCA(gobject = my_giotto_object)
+my_giotto_object <- runUMAP(my_giotto_object, dimensions_to_use = 1:5)
+
+#leiden
+my_giotto_object <- createNearestNetwork(
+  gobject = my_giotto_object,
+  dimensions_to_use = 1:10,   # or however many PCA dims you want
+  k = 15,
+  name = "NN_network"
+)
+my_giotto_object = doLeidenCluster(my_giotto_object, name = 'leiden_clus', nn_network_to_use = "NN_network")
+
+?runDWLSDeconv
+runDWLSDeconv(
+  gobject,
+  expression_values = c("normalized"),
+  logbase = 2,
+  cluster_column = "leiden_clus",
+  sign_matrix,
+  n_cell = 50,
+  cutoff = 2,
+  name = NULL,
+  return_gobject = TRUE
+)
+```
+
+#SPOTlight
+```{r}
+BiocManager::install("SPOTlight")
+library(SPOTlight)
+library(Matrix)
+library(data.table)
+library(Seurat)
+library(SeuratData)
+library(dplyr)
+library(gt)
+library(SPOTlight)
+library(igraph)
+library(RColorBrewer)
+
+
+```
+
+#SingleR
+
+
+

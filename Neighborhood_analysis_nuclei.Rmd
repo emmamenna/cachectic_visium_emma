@@ -1,0 +1,219 @@
+---
+title: "Neighborhood analysis nuclei"
+output: html_document
+date: "2026-01-07"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(SpatialExperiment)
+library(SpatialFeatureExperiment)
+library(purrr)
+library(imcRtools)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(patchwork)
+library(RColorBrewer)
+library(BiocParallel)
+library(SpatialExperiment)
+library(cluster)
+ library(ggspavis)
+```
+
+#Reading nuclei data
+```{r}
+sfe_list <- readRDS("~/sfe_list_annotated")
+filtered_sfe <- sfe_list |> 
+  map(function(sfe){
+    sfe <- sfe[, !sfe$to_discard]
+    sfe
+})
+# labels name colData: "labels_singler"
+```
+
+#Neighborhood analysis with imcRtools as described in https://bioconductor.org/books/3.22/OSTA/pages/img-neighborhood-analysis.html
+```{r}
+#spe <- sfe_list$blocco1_sham
+spe <- filtered_sfe$blocco1_sham
+
+# construct kNN-graph based on Euclidean distances
+sqe <- buildSpatialGraph(spe, 
+                         coords=spatialCoordsNames(spe),
+                         img_id="sample_id",
+                         type="knn", k=10) #anche qua potrei cambiare k e vedere se migliora
+# compute cluster frequencies among each cell's kNNs
+sqe <- aggregateNeighbors(sqe, 
+                          colPairName="knn_interaction_graph", 
+                          aggregate_by="metadata", count_by="labels_singler")
+# view composition of 1st cell's kNNs
+unlist(sqe$aggregatedNeighbors[1, ]) 
+```
+
+```{r}
+# cluster cells by neighborhood compositions
+#ctx <- kmeans(sqe$aggregatedNeighbors, centers=5) #eh... come lo decido? biologi? silhouette?
+
+set.seed(2753)
+ctx <- kmeans(sqe$aggregatedNeighbors, centers=10) 
+table(sqe$ctx <- factor(ctx$cluster))
+# dist_mat <- dist(sqe$aggregatedNeighbors)
+# sil <- silhouette(ctx$cluster, dist = dist_mat)
+# mean(sil[, "sil_width"])
+
+```
+
+#Let’s quickly view the subpopulation composition of each spatial context:
+```{r}
+df <- data.frame(spatialCoords(sqe), colData(sqe))
+round(100*with(df, prop.table(table(labels_singler, ctx), 2)), 2)
+```
+
+#visualization
+```{r}
+plotCoords(sqe, annotate = "ctx")
+```
+
+#provo scider
+```{r}
+#BiocManager::install("scider")
+library(scider)
+library(SpatialExperiment)
+```
+
+#density calculation
+```{r}
+sfe_list <- readRDS("~/sfe_list_annotated")
+filtered_sfe <- sfe_list |> 
+  map(function(sfe){
+    sfe <- sfe[, !sfe$to_discard]
+    sfe
+})
+spe <- filtered_sfe$blocco1_sham
+#gridDensity si aspetta una colonna cell_type
+spe$cell_type <- spe$labels_singler
+spe <- gridDensity(spe)
+names(metadata(spe))
+metadata(spe)$grid_density #ha calcolato la densità per tutti i tipi cellulari
+```
+
+```{r}
+plotDensity(spe,coi="Myonuclei_IIx_IIb")
+```
+
+#After obtaining grid-based density for each COI, we can then detect regions-of-interest (ROIs) based on density or select by user.
+spe <- findROI(spe, coi = "Fibroblasts")
+metadata(spe)$fibroblasts_roi
+
+
+#BANKSY -------------------------------------------------------------------------------------------------------
+```{r}
+library(Banksy)
+library(SummarizedExperiment)
+library(SpatialExperiment)
+library(scuttle)
+library(scater)
+library(cowplot)
+library(ggplot2)
+```
+
+```{r}
+
+# sfe_list <- readRDS("~/sfe_list_annotated")
+# filtered_sfe <- sfe_list |> 
+#   map(function(sfe){
+#     sfe <- sfe[, !sfe$to_discard]
+#     sfe
+# })
+# spe <- filtered_sfe$blocco1_sham
+#spe <- filtered_sfe$blocco2_c26
+
+#SUI 16
+load("~/subset_list.RData")
+spe <- subset_list$sham_b1
+
+# QC based on total counts
+qcstats <- perCellQCMetrics(spe)
+thres <- quantile(qcstats$total, c(0.05, 0.98))
+keep <- (qcstats$total > thres[1]) & (qcstats$total < thres[2])
+spe <- spe[, keep] #circa 2000 nuclei eliminati
+
+# Normalization to mean library size
+spe <- computeLibraryFactors(spe)
+aname <- "normcounts"
+assay(spe, aname) <- normalizeCounts(spe, log = FALSE)
+```
+
+#DOMAINS
+```{r}
+#parametri suggeriti per domain segmentation con visiumHD
+lambda <- 0.8
+k_geom <- 30
+npcs <- 50
+
+set.seed(1000)
+spe <- computeBanksy(spe, assay_name = aname, k_geom = k_geom)
+spe <- runBanksyPCA(spe, lambda = lambda, npcs = npcs)
+spe <- clusterBanksy(spe, lambda = lambda, npcs = npcs, resolution = 0.5) #abbasso la resolution da 0.8
+
+spe$domains <- spe$clust_M0_lam0.8_k50_res0.5 #cambiare anche qua
+table(spe$domains)
+
+```
+
+#visualizzazione
+```{r}
+col <- hcl.colors(n = nlevels(spe$domains), palette = "Dark 3")
+plotCoords(spe, annotate = "domains")
+
+```
+
+#Faccio Banksy direttamente sugli 8bin visto che non parte da un'annotazione cmq.
+```{r}
+load("~/spe_list_8bin_ann2.RData")
+spe <- spe_list$sham_b1
+keep <- !is.na(spe_list$sham_b1$cell_type)
+spe <- spe[,keep]
+
+# QC based on total counts
+qcstats <- perCellQCMetrics(spe)
+thres <- quantile(qcstats$total, c(0.05, 0.98))
+keep <- (qcstats$total > thres[1]) & (qcstats$total < thres[2])
+spe <- spe[, keep] #circa 2000 nuclei eliminati
+
+# Normalization to mean library size
+spe <- computeLibraryFactors(spe)
+aname <- "normcounts"
+assay(spe, aname) <- normalizeCounts(spe, log = TRUE)
+
+#prendo solo i geni + variabili se no non ce la fa
+library(scran)
+dec <- modelGeneVar(spe, assay.type = "normcounts")
+hvg <- getTopHVGs(dec, n = 2000)
+spe <- spe[hvg, ]
+
+```
+
+```{r}
+#parametri suggeriti per domain segmentation con visiumHD
+lambda <- 0.8
+k_geom <- 30
+npcs <- 50
+
+set.seed(1000)
+spe <- computeBanksy(spe, assay_name = aname, k_geom = k_geom)
+spe <- runBanksyPCA(spe, lambda = lambda, npcs = npcs)
+spe <- clusterBanksy(spe, lambda = lambda, npcs = npcs, resolution = 0.2)
+
+spe$domains <- spe$clust_M0_lam0.8_k50_res0.2
+table(spe$domains)
+
+```
+
+```{r}
+plotCoords(spe, annotate = "domains")
+
+```

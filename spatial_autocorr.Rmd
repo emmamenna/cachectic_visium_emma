@@ -105,11 +105,127 @@ moran_results <- do.call(rbind, results_list)
 moran_results
 ```
 
-#DISCORSO PATHWAY
-#però non posso mettermi a calcolare la correlazione spaziale tra 500 coppie di L/R...
+#Moran for FAPs, trim and myo markers
+#ho provato anche a tenere solo gli spot senza myh4 ma non funzia
+```{r}
+load("~/subset_list.RData")
+faps_genes <- c("Pdgfra","Ly6a","Dcn")
+trim63 <- "Trim63"
+load("~/subset_list.RData")
+
+c26_list <- subset_list[names(subset_list) %in% c("c26_b2","c26_b4","c26_b6")]
+
+results_list <- lapply(names(c26_list), function(sample_name) {
+  spe <- c26_list[[sample_name]]
+  message("Processing sample: ", sample_name)
+  
+  sfe <- SpatialFeatureExperiment(
+    assays = assays(spe),
+    colData = colData(spe),
+    spatialCoords = spatialCoords(spe)
+  )
+  
+  # prova a costruire il grafo con protezione dagli errori
+  g <- tryCatch({
+    findVisiumGraph(sfe, zero.policy = TRUE)
+  }, error = function(e) {
+    message("⚠️  Skipping sample '", sample_name, "' due to error: ", e$message)
+    return(NULL)
+  })
+  
+  if (is.null(g)) return(NULL)
+  
+  # controlla punti isolati
+  isolated <- which(card(g$neighbours) == 0)
+  
+  if (length(isolated) > 0) {
+    message("   → Found ", length(isolated), " isolated spots. Removing them...")
+    sfe <- sfe[, -isolated]
+    
+    g <- tryCatch({
+      findVisiumGraph(sfe, zero.policy = TRUE)
+    }, error = function(e) {
+      message("   ⚠️  Sample '", sample_name, "' still problematic after removal. Skipping.")
+      return(NULL)
+    })
+  }
+  
+  if (is.null(g)) return(NULL)
+  
+  colGraph(sfe, "visium") <- g
+  message("✅  Sample '", sample_name, "' processed successfully with ", ncol(sfe), " spots.")
+  
+  # --- Calcolo del Moran's I bivariato per i geni ---
+  moran_values <- numeric(length(faps_genes))
+  names(moran_values) <- faps_genes
+  
+  for (i in seq_along(faps_genes)) {
+    gene <- faps_genes[i]
+    
+    mor <- tryCatch({
+      moran_bv(
+        x = logcounts(sfe)[trim63, ],
+        y = logcounts(sfe)[gene, ],
+        listw = g,
+        nsim = 499,
+        scale = TRUE
+      )
+    }, error = function(e) {
+      message("   ⚠️  Moran failed for gene ", gene, ": ", e$message)
+      return(NULL)
+    })
+    
+    moran_values[i] <- if (!is.null(mor)) mor$t0 else NA
+  }
+  
+  # ritorna solo i valori del Moran
+  return(data.frame(
+    sample = sample_name,
+    gene = faps_genes,
+    moran = moran_values
+  ))
+})
+
+#2 campioni su 3 non vanno, comunque direi che il segnale è chiaro
+
+results_list <- Filter(Negate(is.null), results_list)
+moran_results <- do.call(rbind, results_list)
+moran_results
 
 
+```
 
+#Moran locale e grafico co-espressione
+?localmoran
+in realtà non so quanto senso abbia perché è un'autocorrelazione
+chiedi a Valerio
+```{r}
+spe <- subset_list$c26_b4
+sfe <- SpatialFeatureExperiment(
+  assays = assays(spe),
+  colData = colData(spe),
+  spatialCoords = spatialCoords(spe)
+)
 
+g <- findVisiumGraph(sfe, zero.policy = TRUE)
 
+#devo costruire una variabile unica che rappresenta la relazione tra i 2 geni
+faps_genes <- c("Pdgfra","Ly6a","Dcn")
+#sarebbe meglio se mettessi assieme tutti i geni dei faps in qualche modo però perché erano espressi poco
+mat_trim <- logcounts(spe["Trim63",])
+mat_trim_num <- as.numeric(mat_trim)
+mat_faps <- logcounts(spe["Pdgfra",])
+mat_faps_num <- as.numeric(mat_faps)
+x = terra::scale(mat_trim_num) * terra::scale(mat_faps_num)
+x <- as.vector(x)
+local_moran <- localmoran(x = x, listw = g)
+#spe$moran <- terra::scale(local_moran[,1])
+spe$moran <- local_moran[,1]
+summary(spe$moran)
+
+library(ggplot2)
+library(ggspavis)
+plotCoords(spe, annotate ="moran")
+
+```
 

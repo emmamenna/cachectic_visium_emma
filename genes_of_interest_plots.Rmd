@@ -83,9 +83,17 @@ dot_data <- df_long %>%
   group_by(condition, celltype, gene) %>%
   summarise(
     pct_expr = sum(expr > 0) / n() * 100,
-    avg_expr = mean(expr[expr > 0], na.rm = TRUE),
+    avg_expr = mean(expr[expr > 0], na.rm = TRUE), 
     .groups = "drop"
   )
+
+#VA ANCHE SCALATA 
+dot_scaled <- dot_data %>%
+  group_by(gene) %>%
+  mutate(
+    avg_expr_scaled = scale(avg_expr)[,1]  # Z-score per gene
+  ) %>%
+  ungroup()
 
 # genera grafici separati per ogni marker
 plots <- lapply(markers, function(g){

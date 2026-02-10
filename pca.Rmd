@@ -1,0 +1,125 @@
+---
+title: "umap"
+output: html_document
+date: "2025-12-16"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(Matrix)
+library(jsonlite)
+library(arrow)
+library(png)
+library(SummarizedExperiment)
+library(S4Vectors)
+library(ggspavis)
+library(SpatialExperiment)
+library(patchwork)
+library(VisiumIO)
+library(edgeR)
+library(scater)
+library(scuttle)
+library(scran)
+library(dplyr)
+library(SingleCellExperiment)
+library(tidyverse)
+library(SpotSweeper)
+```
+
+#8bin
+```{r}
+load("~/spe_list_8bin_ann2.RData")
+load("~/subset_list.RData")
+
+spe_list <- lapply(spe_list, function(spe) {
+   keep <- !is.na(spe$cell_type) & colSums(counts(spe)) > 0
+   spe[,keep]
+})
+sham_b1_8bin <- spe_list$sham_b1
+sham_b1_16bin <- subset_list$sham_b1
+
+#normalizzazione
+sham_b1_8bin <- logNormCounts(sham_b1_8bin)
+sham_b1_16bin <- logNormCounts(sham_b1_16bin)
+
+library(scater)
+sham_b1_16bin <- scater::runPCA(
+  sham_b1_16bin,
+  exprs_values = "logcounts",
+  ncomponents = 2
+)
+scater::plotPCA(
+  sham_b1_16bin,
+  colour_by = "cell_type",
+  size_by = NULL  # or another numeric column if you want point sizes
+)
+sham_b1_16bin <- scater::runUMAP(sham_b1_16bin, dimred = "PCA", n_neighbors = 3)
+scater::plotUMAP(sham_b1_16bin, color_by = "cell_type", point_size = 1)
+
+load("~/mapp_b1.RData")
+idx <- match(
+  colnames(sham_b1_8bin),
+  mapp_b1$square_008um
+)
+
+sham_b1_8bin$cell_type16bin <-
+  sham_b1_16bin$cell_type[
+    match(
+      mapp_b1$square_016um[idx],
+      colnames(sham_b1_16bin)
+    )
+  ]
+
+sham_b1_8bin <- scater::runPCA(
+  sham_b1_8bin,
+  exprs_values = "logcounts",
+  ncomponents = 2
+)
+scater::plotPCA(
+  sham_b1_8bin,
+  colour_by = "cell_type16bin",
+  size_by = NULL  # or another numeric column if you want point sizes
+)
+
+colors_celltypes <- c(
+    "Endothelial" = "#0072B2",       # blu vivo
+    "FAPs" = "#009E73",              # verde vivo
+    "Immune_Cells" = "#D55E00",      # arancione-rosso
+    "MuSC" = "#E69F00",              # arancione
+    "Myonuclei_IIb" = "#CC79A7",     # magenta
+    "Myonuclei_IIx" = "#56B4E9",     # azzurro chiaro
+    "Myonuclei_IIx_IIa" = "#F0E442", # giallo
+    "Myonuclei_IIx_IIb" = "#9B59B6", # viola chiaro
+    "Myonuclei_MTJ" = "#0099B4",     # turchese
+    "Myonuclei_NMJ" = "#DDAA33",     # senape
+    "Myonuclei_Trim63" = "#CC3311",  # rosso scuro
+    "Nervous_System" = "#44AA99",    # verde acqua
+    "Pericyte" = "#AA4499",          # viola/rosa
+    "Smooth_Muscular" = "#332288",   # blu-viola scuro
+    "Tenocyte" = "#A3E635"           # verde lime
+)
+sham_b1_8bin <- scater::runUMAP(sham_b1_8bin, dimred = "PCA", n_neighbors = 3)
+scater::plotUMAP(sham_b1_8bin, color_by = "cell_type16bin", point_size = 0.5)
+sham_b1_8bin$cell_type16bin_col <- colors_celltypes[
+  as.character(sham_b1_8bin$cell_type16bin)
+]
+
+p <- scater::plotUMAP(
+  sham_b1_8bin,
+  colour_by = "cell_type16bin_col",
+  point_size = 1
+)
+
+p + scale_colour_identity(
+  na.value = "grey80",
+  breaks = colors_celltypes,
+  labels = names(colors_celltypes),
+  guide = "legend"
+)
+
+
+```
+
