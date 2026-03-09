@@ -95,7 +95,7 @@ for (b in c(1:7, 9)) {
 #Check mithocondrial and ribosomal genes.
 ```{r}
 rownames(speHD2_f) <- rowData(speHD2_f)$Symbol
-mt <- grepl("^Mt-", rownames(speHD2_f))
+mt <- grepl("^Mt-", rownames(speHD2_f)) 
 rpl <- grepl("^Rpl-", rownames(speHD2_f))
 rps <- grepl("^Rps-", rownames(speHD2_f))
 ```

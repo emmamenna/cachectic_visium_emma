@@ -1,0 +1,128 @@
+---
+title: "Rctd on nuclei"
+output: html_document
+date: "2026-03-09"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(arrow)
+library(Banksy)
+library(BiocParallel)
+library(DropletUtils)
+library(dplyr)
+library(edgeR)
+library(ggplot2)
+library(graphics)
+library(igraph)
+library(jsonlite)
+library(Matrix)
+library(OSTA.data)
+library(patchwork)
+library(pheatmap)
+library(S4Vectors)
+library(scDblFinder)
+library(scater)
+library(scran)
+library(scuttle)
+library(SingleCellExperiment)
+library(SpatialExperiment)
+library(SummarizedExperiment)
+library(tidyr)
+library(VisiumIO)
+library(spacexr)
+library(SpotSweeper)
+library(ggspavis)
+library(writexl)
+library(lme4)
+```
+
+#RCTD
+Cambio UMI_min assumendo che 100 sia l'ideale per visium non HD (55micron),
+assumo che il diametro di un mionucleo sia 20um e quello di altri nuclei inferiore
+allora potrei mettere 55:12 = 100:x, x = 20
+e aggiusto anche il minimo per la normalizzazione con la stessa proporzione
+```{r}
+spe <- readRDS("~/sce_arivis_nuclei.rds")
+sce_ref <- readRDS("~/multiome_sce.rds")
+
+run_my_rctd <- function(spe, sce_ref, out_prefix) {
+  set.seed(9237)
+  # rownames(spe) <- rowData(spe)$Symbol
+  # rownames(spe) <- make.unique(rownames(spe))
+  
+  #data preparation
+  rctd_data <- createRctd(
+    spatial_experiment = spe,
+    reference_experiment = sce_ref,
+    cell_type_col = "subclusters",
+    UMI_min = 10,
+    UMI_min_sigma = 50,
+  )
+  
+  #deconvolution in doublet mode
+  results <- runRctd(rctd_data, rctd_mode = "doublet")
+  
+  classification_df <- data.frame(
+    pixel = colnames(assay(results)),
+    spot_class = colData(results)$spot_class,
+    first_type = colData(results)$first_type,
+    second_type = colData(results)$second_type
+  )
+  classification_df
+  print(head(classification_df))
+  
+  # Create named vector to map types by cell_id
+  type_map <- setNames(classification_df$first_type, classification_df$pixel)
+  spe$cell_type <- type_map[as.character(spe$cell_id)]
+  print(table(spe$cell_type))
+  
+  # assign("spe_list", replace(spe_list, out_prefix, spe), envir = .GlobalEnv)
+  # invisible(spe)
+}
+
+spe$in_tissue <- TRUE
+color_vector <- c(
+    "Endothelial" = "#0072B2",       # blu vivo
+    "FAPs" = "#009E73",              # verde vivo
+    "Immune_Cells" = "#D55E00",      # arancione-rosso
+    "MuSC" = "#E69F00",              # arancione
+    "Myonuclei_IIb" = "#CC79A7",     # magenta
+    "Myonuclei_IIx" = "#56B4E9",     # azzurro chiaro
+    "Myonuclei_IIx_IIa" = "#F0E442", # giallo
+    "Myonuclei_IIx_IIb" = "#9B59B6", # viola chiaro
+    "Myonuclei_MTJ" = "#0099B4",     # turchese
+    "Myonuclei_NMJ" = "#DDAA33",     # senape
+    "Myonuclei_Trim63" = "#CC3311",  # rosso scuro
+    "Nervous_System" = "#44AA99",    # verde acqua
+    "Pericyte" = "#AA4499",          # viola/rosa
+    "Smooth_Muscular" = "#332288",   # blu-viola scuro
+    "Tenocyte" = "#A3E635"           # verde lime
+)
+plotCoords(spe, annotate = "cell_type", x_coord = "x_coord",
+           y_coord = "y_coord", point_size = 0.9) +
+    scale_color_manual(values = color_vector) +
+    theme(
+      legend.key.width = unit(0.5, "lines"),
+      legend.key.height = unit(1, "lines")
+    )
+#round(prop.table(table(spe$cell_type)), 3)
+
+#cambio il nome dell'assay
+# for (i in seq_along(spe_list)) {
+#   assayNames(spe_list[[i]])[assayNames(spe_list[[i]]) == "X"] <- "counts"
+# }
+
+#run_my_rctd(sce_arivis_nuclei, sce_ref, name)
+
+# for (name in da_fare) {
+#     run_my_rctd(spe_list[[name]], sce_ref, name)
+# }
+# 
+# save(spe_list,file="spe_list_8bin_ann2.RData")
+```
+
+

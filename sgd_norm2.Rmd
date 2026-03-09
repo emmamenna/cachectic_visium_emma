@@ -1,0 +1,210 @@
+---
+title: "Integrazione e annotazione con sgdGMF"
+output: html_document
+date: "2025-06-30"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(Matrix)
+library(jsonlite)
+library(arrow)
+library(SummarizedExperiment)
+library(S4Vectors)
+library(SpatialExperiment)
+library(VisiumIO)
+library(edgeR)
+library(scuttle)
+library(scran)
+library(dplyr)
+library(SingleCellExperiment)
+library(Seurat)
+library(ggplot2)
+library(sgdGMF)
+```
+
+#Creo un oggetto sce per ogni singolo campione
+```{r}
+
+load("speHD1_f.RData")
+load("speHD2_f.RData")
+load("speHD3_f.RData")
+load("speHD4_f.RData")
+load("speHD5_f.RData")
+load("speHD6_f.RData")
+load("speHD7_f.RData")
+load("speHD9_f.RData")
+
+crea_sce <- function(spe_obj, block) {
+  rownames(spe_obj) <- rowData(spe_obj)$Symbol #40 CON LO STESSO SYMBOL
+  tissue_type <- unique(spe_obj$tissue_type)
+  sce_list <- list()
+  # Per ogni tipo di tessuto, creo un oggetto SingleCellExperiment
+  for (sample in tissue_type) {
+    name <- paste0(sample, "_", block)
+    sce_list[[name]] <- SingleCellExperiment(assays = list(
+      counts = counts(spe_obj)[, spe_obj$tissue_type == sample]
+    ))
+  }
+  return(sce_list)
+}
+sce_hd1 <- crea_sce(speHD1_f, "b1")
+sce_hd2 <- crea_sce(speHD2_f, "b2")
+sce_hd3 <- crea_sce(speHD3_f, "b3")
+sce_hd4 <- crea_sce(speHD4_f, "b4")
+sce_hd5 <- crea_sce(speHD5_f, "b5")
+sce_hd6 <- crea_sce(speHD6_f, "b6")
+sce_hd7 <- crea_sce(speHD7_f, "b7")
+sce_hd9 <- crea_sce(speHD9_f, "b9")
+
+rm(speHD1_f,speHD2_f,speHD3_f,speHD4_f,speHD5_f,speHD6_f,speHD7_f,speHD9_f)
+
+sce_list <- c(sce_hd1,sce_hd2,sce_hd3,sce_hd4,sce_hd5,sce_hd6,sce_hd7,sce_hd9)
+
+```
+
+#NORMALIZZAZIONE PER DECONVOLUZIONE
+```{r, include=FALSE}
+
+sce_list_norm <- lapply(sce_list, function(sce) {
+  clust <- quickCluster(sce, min.size=1000)                      
+  deconv.sf <- calculateSumFactors(sce, clusters = clust, sizes = seq(100, 500, 50))  
+  sizeFactors(sce) <- deconv.sf
+  sce <- logNormCounts(sce)                     
+  return(sce)
+})
+#ho aumentato le dimensioni dei pool e minsize in quickClusters
+
+#AUMENTARE I FILTRAGGI???
+
+names(sce_list_norm) <- names(sce_list)
+
+```
+
+#Merge all samples into a single SCE object
+Problema: la normalizzazione SCTransform butta via geni non abbastanza espressi
+TROVARE SOLUZIONE
+intanto mantengo solo quelli in comune (vero è che valgono solo i + variabili)
+```{r}
+
+#merge counts and logcounts matrices
+count_matrices <- lapply(sce_list_norm, function(x) counts(x))
+combined_counts <- do.call(cbind, count_matrices)
+logcount_matrices <- lapply(sce_list_norm, function(x) logcounts(x))
+combined_logcounts <- do.call(cbind, logcount_matrices)
+
+#create sample_id vector for coldata
+sample_id <- unlist(mapply(function(x, name) {
+  rep(name, ncol(x))
+}, sce_list_norm, names(sce_list_norm)))
+
+#create block and tissue factors
+df <- data.frame(
+  sample_id = sample_id,
+  tissue = sub("_.*", "", sample_id),
+  blocco = sub(".*_", "", sample_id)
+)
+
+col_data <- DataFrame(sample_id = sample_id, tissue = df$tissue, blocco = df$blocco)
+
+#give bins unique names 
+colnames(combined_counts) <- make.unique(paste0(sample_id, "_cell"))
+colnames(combined_logcounts) <- colnames(combined_counts)
+rownames(col_data) <- colnames(combined_counts)
+
+#Create SCE object
+sce_merged <- SingleCellExperiment(
+  assays = list(counts = combined_counts, logcounts = combined_logcounts),
+  colData = col_data
+)
+
+```
+
+```{r}
+rm(combined_logcounts, combined_counts, logcount_matrices, count_matrices, col_data, df)
+rm(sce_list_norm, sce_list)
+rm(sce_hd1, sce_hd2, sce_hd3, sce_hd4, sce_hd5, sce_hd6, sce_hd7, sce_hd9)
+gc()
+```
+
+#Most variable genes selection and design matrix creation 
+```{r}
+#Geni più variabili
+dec.sce <- modelGeneVar(sce_merged, assay.type = "logcounts")
+
+#Decomposizione varianza
+summary_table <- tibble::tibble(
+  Descrizione = c(
+    "Totale geni",
+    "NA (non stimata)",
+    "Var. bio <= 0",
+    "Var. bio > 0",
+    "FDR < 0.05 (TRUE)",
+    "FDR < 0.01 (TRUE)"
+  ),
+  Valore = c(
+    nrow(dec.sce),
+    sum(is.na(dec.sce$bio)),
+    sum(!is.na(dec.sce$bio) & dec.sce$bio <= 0),
+    sum(!is.na(dec.sce$bio) & dec.sce$bio > 0),
+    sum(dec.sce$FDR < 0.05, na.rm = TRUE),
+    sum(dec.sce$FDR < 0.01, na.rm = TRUE)
+  )
+)
+
+print(summary_table)
+
+top3000 <- getTopHVGs(dec.sce, n = 3000)
+
+# Prepare input matrices for GMF
+# Subset the merged SCE object to include only HVGs
+sce_filtered <- sce_merged[rownames(sce_merged) %in% top3000, ]
+
+# Transpose the count matrix to match GMF input (cells x genes)
+Y <- as.matrix(t(counts(sce_filtered)))  # Warning: may consume large memory
+
+X <- model.matrix(~ sample_id, colData(sce_merged))
+X <- X[colnames(sce_filtered), ]
+
+save(X,file="design_matrix.RData")
+save(Y,file="filtered_counts.RData")
+
+```
+
+#fit -> SU HACTAR
+```{r}
+load("design_matrix.RData")
+load("filtered_counts.RData")
+
+family <- poisson()              # Assume Poisson distribution for U*V
+method <- "sgd"                  # Stochastic gradient descent
+sampling <- "block"              # Block-wise sampling strategy
+control <- list(
+  maxiter = 10000,              # Maximum number of iterations
+  size = c(1000, 250)           # Batch size: 1000 cells × 250 genes
+)
+
+# Fit the Poisson GMF model
+fit <- sgdGMF::sgdgmf.fit(
+  Y = Y,
+  X = X,
+  ncomp = 30,                   # Number of latent components
+  family = family,
+  method = method,
+  sampling = sampling,
+  control.alg = control,
+  control.init = list(          # Initialization method
+    method = "ols",             # Use ordinary least squares
+    type = "link"               # On link scale (log)
+  )
+)
+
+save(fit,file="fit_tot.RData")
+
+```
+
+
+

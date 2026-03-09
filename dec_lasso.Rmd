@@ -1,5 +1,5 @@
 ---
-title: "dec_lasso"
+title: "annotation with lasso deconvolution algorithm"
 output: html_document
 date: "2026-01-23"
 ---
@@ -15,30 +15,32 @@ markers_bio <- readRDS("~/marker_genes_list_singleR_annot.rds")
 multiome_sce <- readRDS("~/multiome_sce.rds")
 load("~/markers_paper.RData")
 
-#prendo solo i primi 20 in ordine di espressione tra i markers dei DEG 
-markers_deg <- lapply(markers_deg, function(x) x[1:20])
+markers_deg <- lapply(markers_deg, function(x) head(x, 20))
+markers_deg <- markers_deg[names(markers_bio)]
+markers_list <- tapply(
+  names(markers_bio),
+  names(markers_bio),
+  function(n)
+    unique(c(markers_deg[[n]], markers_bio[[n]]))
+)
+common_names <- intersect(names(markers_list), names(markers_paper))
+markers_common <- tapply(
+  common_names,
+  common_names,
+  function(n)
+    unique(c(markers_list[[n]], markers_paper[[n]]))
+)
+markers <- c(
+  markers_common,
+  markers_list[!names(markers_list) %in% common_names]
+)
+save(markers,file = "markers_list_mixed.RData")
 
-#metti insieme markers deg e bio
-names(markers_bio)
-names(markers_deg) <- c("Endothelial","FAPs","Immune_Cells","MuSC","Nervous_System","Pericyte",
-                        "Smooth_Muscular","Tenocyte","Myonuclei_IIb","Myonuclei_IIx",
-                        "Myonuclei_IIx_IIa","Myonuclei_IIx_IIb","Myonuclei_MTJ","Myonuclei_NMJ",
-                        "Myonuclei_Trim63")
-markers_list <- Map(c, markers_deg, markers_bio)
-markers_list <- lapply(markers_list, function(x) unique(x))
-
-#aggiungo anche i markers del paper
-names(markers_paper) <- c("Endothelial","FAPs","Immune_Cells","MuSC","Pericyte",
-                        "Smooth_Muscular","Tenocyte","Myonuclei_IIb","Myonuclei_IIx",
-                        "Myonuclei_MTJ","Myonuclei_NMJ")
-
-common_names <- intersect(names(markers_paper), names(markers_list))
-markers_common <- Map(c, markers_list[common_names], markers_paper[common_names])
-markers_common <- lapply(markers_common, function(x) unique(x))
-markers <- c(markers_common, markers_list[!names(markers_list) %in% common_names])
-
-#save(markers, file = "markers_list_mixed.RData")
 ```
+
+
+
+
 
 ```{r}
 #load("~/markers_list_mixed.RData")
@@ -73,7 +75,6 @@ library(BiocParallel)
 common <- intersect(rownames(logcounts(spe)),
                     rownames(logcounts(pb_mult)))
 
-#recupera soglia sulla varianza
 X <- logcounts(spe)[common, ]
 Y <- logcounts(pb_mult)[common, ]
 var_genes <- rowVars(as.matrix(X)) > 1e-8

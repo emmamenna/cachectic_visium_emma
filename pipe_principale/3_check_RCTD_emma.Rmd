@@ -1,0 +1,698 @@
+---
+title: "Esplorazione Bin"
+author: "Valerio Reffo"
+date: "2026-03-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r library, message=FALSE, warning=FALSE, include=FALSE}
+library(purrr)
+library(ggplot2)
+library(ggspavis)
+library(jsonlite)
+library(SpatialExperiment)
+library(data.table)
+library(ggnewscale)
+library(SingleCellExperiment)
+library(SingleR)
+library(BiocParallel)
+library(dplyr)
+library(tidyr)
+library(forcats) # For ordering plots
+
+```
+
+```{r}
+#load("~/subset_list.RData")
+#spe <-subset_list$sham_b1
+
+#marker_genes_list_singleR_annot <- readRDS("~/marker_genes_list_singleR_annot.rds")
+
+color_vector <- c(
+    "Endothelial" = "#0072B2",       # blu vivo
+    "FAPs" = "#009E73",              # verde vivo
+    "Immune_Cells" = "#D55E00",      # arancione-rosso
+    "MuSC" = "#E69F00",              # arancione
+    "Myonuclei_IIb" = "#CC79A7",     # magenta
+    "Myonuclei_IIx" = "#56B4E9",     # azzurro chiaro
+    "Myonuclei_IIx_IIa" = "#F0E442", # giallo
+    "Myonuclei_IIx_IIb" = "#9B59B6", # viola chiaro
+    "Myonuclei_MTJ" = "#0099B4",     # turchese
+    "Myonuclei_NMJ" = "#DDAA33",     # senape
+    "Myonuclei_Trim63" = "#CC3311",  # rosso scuro
+    "Nervous_System" = "#44AA99",    # verde acqua
+    "Pericyte" = "#AA4499",          # viola/rosa
+    "Smooth_Muscular" = "#332288",   # blu-viola scuro
+    "Tenocyte" = "#A3E635"           # verde lime
+)
+
+```
+
+```{r}
+spe
+```
+
+# Analysis of RCTD results
+There are a lot of Endothelial, but why? what is the distribution of the probability for each bin to be a Endothetial? 
+
+```{r}
+cd_df <- colData(spe) |> as_tibble()
+
+cd_df |> 
+  filter(cell_type == "Endothelial") |> 
+  summarise(mean = mean(Endothelial),
+            sd = sd(Endothelial),
+            min = min(Endothelial),
+            max = max(Endothelial))
+
+cd_df |> 
+  filter(cell_type == "Endothelial", Endothelial == 0) |> 
+  summarise(n = n())
+cd_df |> 
+  filter(cell_type == "Endothelial", Endothelial == 1) |> 
+  summarise(n = n())
+cd_df |> 
+  filter(
+    cell_type == "Endothelial", 
+    between(Endothelial, 0.5, 0.99)
+  ) |> 
+  summarise(n = n())
+cd_df |> 
+  filter(
+    cell_type == "Endothelial", 
+    between(Endothelial, 0.0001, 0.5)
+  ) |> 
+  summarise(n = n())
+#ce ne sono pochissime tra 0 e 0.5
+
+```
+#Stessa cosa per un altro tipo cellulare
+```{r}
+
+cd_df |> 
+  filter(cell_type == "Myonuclei_IIb") |> 
+  summarise(mean = mean(Myonuclei_IIb),
+            sd = sd(Myonuclei_IIb),
+            min = min(Myonuclei_IIb),
+            max = max(Myonuclei_IIb))
+
+cd_df |> 
+  filter(cell_type == "Myonuclei_IIb", Myonuclei_IIb == 0) |> 
+  summarise(n = n())
+cd_df |> 
+  filter(cell_type == "Myonuclei_IIb", Myonuclei_IIb == 1) |> 
+  summarise(n = n())
+cd_df |> 
+  filter(
+    cell_type == "Myonuclei_IIb", 
+    between(Myonuclei_IIb, 0.5, 0.99)
+  ) |> 
+  summarise(n = n())
+cd_df |> 
+  filter(
+    cell_type == "Myonuclei_IIb", 
+    between(Myonuclei_IIb, 0.0001, 0.5)
+  ) |> 
+  summarise(n = n())
+
+#STESSO DISCORSO
+
+```
+
+```{r}
+# 1. Filter only the bins assigned as Endothelial
+p_hist <- as.data.frame(cd_df) |> 
+  filter(cell_type == "Endothelial") |>
+  ggplot(aes(x = Endothelial)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "black", alpha = 0.8) +
+  theme_minimal() +
+  labs(
+    title = "Distribution of Endothelial Scores",
+    subtitle = "Only including bins classified as 'Endothelial'",
+    x = "Endothelial Score (0-1)",
+    y = "Number of Bins"
+  )
+
+print(p_hist)
+```
+
+
+Second highest scores among Endothelial defined cell types
+```{r}
+# Define all your cell type score columns
+score_cols <- c("Endothelial", "FAPs", "Immune_Cells", "MuSC", 
+                "Myonuclei_IIb", "Myonuclei_IIx", "Myonuclei_IIx_IIa", 
+                "Myonuclei_IIx_IIb", "Myonuclei_MTJ", "Myonuclei_NMJ", 
+                "Myonuclei_Trim63", "Nervous_System", "Pericyte", 
+                "Smooth_Muscular", "Tenocyte")
+
+# Extract the second highest score for each Endothelial bin
+second_highest_df <- cd_df |> 
+  filter(cell_type == "Endothelial", Endothelial != 0) |>
+  select(location_id, all_of(score_cols)) |> 
+  pivot_longer(cols = -location_id, names_to = "candidate_type", values_to = "score") |>
+  # Group by each individual bin
+  group_by(location_id) |>
+  # Sort scores from highest to lowest inside each bin
+  arrange(desc(score)) |>
+  # Grab the 2nd row (which is the second highest score)
+  slice(2) |> 
+  ungroup()
+
+# Plot: WHICH cell types are most frequently the "second choice"?
+p_2nd_identity <- ggplot(second_highest_df, aes(x = fct_infreq(candidate_type))) +
+  geom_bar(fill = "darkorange", color = "black", alpha = 0.8) +
+  theme_minimal() +
+  coord_flip() + # Flip for readable names
+  labs(
+    title = "What is sharing space with Endothelial cells?",
+    subtitle = "Most common 'second-highest' cell types in Endothelial bins",
+    x = "Cell Type",
+    y = "Count of Bins"
+  )
+
+print(p_2nd_identity)
+
+```
+
+```{r}
+plot_confidence <- cd_df |> 
+  filter(cell_type == "Endothelial", Endothelial != 0) |>
+  left_join(second_highest_df |> select(location_id, second_type = candidate_type, second_score = score), by = "location_id") |>
+  mutate(Confidence_Delta = Endothelial - second_score) |> 
+  ggplot(aes(x = Confidence_Delta)) +
+  geom_histogram(bins = 30, fill = "purple", color = "black", alpha = 0.7) +
+  theme_minimal() +
+  labs(title = "Assignment Confidence (Endothelial Score - 2nd Highest Score)",
+       x = "Delta (Higher = Purer Bin, Lower = Mixed Bin)")
+plot_confidence
+```
+
+```{r}
+weird_endo <- cd_df |> 
+  filter(cell_type == "Endothelial", Endothelial == 0)
+
+# 2. Check the MAXIMUM score for all other cell types in these bins
+cat("\n--- MAXIMUM SCORE IN OTHER CELL TYPES ---\n")
+weird_endo |> 
+  select(FAPs:Tenocyte) |> 
+  summarise(across(everything(), max)) |> 
+  print(width = Inf)
+
+# 3. Check HOW MANY of these 5700 bins have a score > 0 for the other cell types
+cat("\n--- NUMBER OF BINS WITH SCORE > 0 ---\n")
+weird_endo |> 
+  select(FAPs:Tenocyte) |> 
+  summarise(across(everything(), ~ sum(. > 0))) |> 
+  print(width = Inf)
+```
+
+```{r}
+# 2. Reshape and calculate the summary
+zero_score_summary <- cd_df |> 
+  # Keep only the essential columns (location_id, assigned cell_type, and the score columns)
+  select(location_id, assigned_type = cell_type, all_of(score_cols)) |> 
+  
+  # Pivot the score columns into two new columns: 'score_type' and 'score_value'
+  pivot_longer(
+    cols = all_of(score_cols), 
+    names_to = "score_type", 
+    values_to = "score_value"
+  ) |> 
+  
+  # KEEP ONLY the rows where the assigned type matches the score column name
+  filter(assigned_type == score_type) |> 
+  
+  # Group by the assigned cell type to calculate our stats
+  group_by(assigned_type) |> 
+  
+  # Calculate how many total bins, and how many have a score of exactly 0
+  summarise(
+    total_bins = n(),
+    bins_with_zero_score = sum(score_value == 0, na.rm = TRUE),
+    .groups = "drop"
+  ) |> 
+  
+  # Add the percentage for context
+  mutate(percentage_zero = (bins_with_zero_score / total_bins) * 100) |> 
+  
+  # Sort so the worst offenders are at the top
+  arrange(desc(bins_with_zero_score))
+
+# View the result
+print(zero_score_summary)
+```
+
+Looks like is a unique problem of the Endothelial and MuSC (which are manually annotated)
+DEVO RIMETTERE I MUSC??
+```{r}
+library(dplyr)
+
+coords <- spatialCoords(spe) # get the coords
+colnames(coords) <- paste0("spatial_", colnames(coords)) # make names unique
+
+cd_df <- bind_cols(cd_df, as.data.frame(coords)) # prefer bind_cols over cbind
+# cd_df <- cbind(cd_df, spatialCoords(spe))
+valid_location_ids <- cd_df |> 
+  select(location_id, cell_type, all_of(score_cols)) |> 
+  pivot_longer(
+    cols = all_of(score_cols), 
+    names_to = "score_type", 
+    values_to = "score_value"
+  ) |> 
+  # Keep only rows where the assignment matches the score column, AND the score is > 0
+  filter(cell_type == score_type, score_value > 0) |> 
+  pull(location_id) # This pulls just the location_ids into a simple vector
+
+# 3. Filter your main dataframe using %in%
+cd_df_clean <- cd_df |> 
+  filter(location_id %in% valid_location_ids)
+
+```
+
+
+```{r}
+cell_proportions <- cd_df_clean |> 
+  count(cell_type) |> 
+  mutate(
+    proportion = n / sum(n),
+    percentage = proportion * 100
+  ) |> 
+  # Sort so the most abundant cell type is at the top of the plot
+  arrange(desc(percentage))
+
+# plot
+p_stacked <- cd_df_clean |> 
+  ggplot(aes(x = "Filtered Tissue", fill = cell_type)) +
+  
+  # Removed color = "white" so the bars touch seamlessly
+  geom_bar(position = "fill", width = 0.4) +
+  
+  # Applies your custom color palette
+  scale_fill_manual(values = color_vector) +
+  
+  theme_minimal() +
+  labs(
+    title = "Composition of Confident Cell Types",
+    subtitle = paste0("Total valid bins: ", nrow(cd_df_clean)),
+    x = NULL, 
+    y = "Proportion (0 to 1)",
+    fill = "Cell Type"
+  ) +
+  theme(
+    axis.text.x = element_text(size = 14, face = "bold"), 
+    panel.grid.major.x = element_blank(), 
+    panel.grid.minor.x = element_blank()
+  )
+
+print(p_stacked)
+```
+
+```{r}
+cd_df_analyzed <- cd_df |> 
+  rowwise() |> 
+  mutate(
+    # What was the score of the cell_type it was originally assigned?
+    original_score = c_across(all_of(score_cols))[match(cell_type, score_cols)],
+    
+    # What is the highest score across ALL cell types for this bin?
+    max_score = max(c_across(all_of(score_cols))),
+    
+    # WHICH cell type has that highest score?
+    best_type = list(score_cols[which.max(c_across(all_of(score_cols)))])
+  ) |> 
+  ungroup()
+
+# 3. Print the Diagnostic Summary!
+cat("\n--- WHAT IS INSIDE THE SCORE=0 BINS? ---\n")
+cd_df_analyzed |> 
+  filter(original_score == 0) |> 
+  mutate(
+    # Group them into "Completely Empty" vs "Mislabeled"
+    status = if_else(max_score == 0, 
+                     "All 15 scores are 0", 
+                     paste("Actually belongs to:", best_type))
+  ) |> 
+  count(assigned_as = cell_type, status, name = "number_of_bins") |> 
+  arrange(desc(number_of_bins)) |> 
+  print(n = 50) # Prints the top 50 rows so you can see where they went
+```
+
+#Funzione che assegna i nuovi tipi cellulari
+```{r}
+# 2. Define the function
+fix_spe_celltypes <- function(spe, score_columns, cell_type_col = "cell_type") {
+  
+  # Extract colData as a dataframe
+  cd <- as.data.frame(colData(spe))
+  
+  # Convert just the score columns into a numeric matrix (for extreme speed)
+  score_mat <- as.matrix(cd[, score_columns])
+  
+  # A. Find the MAXIMUM score for each bin
+  max_score <- apply(score_mat, 1, max)
+  
+  # B. Find WHICH cell type has that maximum score using max.col()
+  best_type <- score_columns[max.col(score_mat, ties.method = "first")]
+  
+  # C. Find the score of the CURRENTLY assigned cell type
+  # We find the column index of the assigned cell type, then extract the exact score
+  orig_col_idx <- match(as.character(cd[[cell_type_col]]), score_columns)
+  orig_score <- score_mat[cbind(1:nrow(score_mat), orig_col_idx)]
+  
+  # ---------------------------------------------------------
+  # Apply your logic to create new_cell_type
+  # ---------------------------------------------------------
+  new_cell_type <- as.character(cd[[cell_type_col]])
+  
+  # Logic 1: If original score is 0, but another type is > 0 -> Reassign to best_type
+  reassign_mask <- which(orig_score == 0 & max_score > 0)
+  new_cell_type[reassign_mask] <- best_type[reassign_mask]
+  
+  # Logic 2: If EVERY score is 0 -> Assign NA
+  na_mask <- which(max_score == 0)
+  new_cell_type[na_mask] <- NA
+  
+  # Assign the new column back directly into the SPE object's colData
+  spe$new_cell_type <- new_cell_type
+  
+  return(spe)
+}
+
+```
+
+```{r}
+# zeroscore_fun <- function(spe){
+#   cd_df <- colData(spe) |> as_tibble()
+#   
+#   # zero score summary info
+#   zero_score_summary <- cd_df |> 
+#     select(location_id, assigned_type = cell_type, all_of(score_cols)) |> 
+#     pivot_longer(
+#       cols = all_of(score_cols), 
+#       names_to = "score_type", 
+#       values_to = "score_value"
+#     ) |> 
+#     filter(assigned_type == score_type) |> 
+#     group_by(assigned_type) |> 
+#     summarise(
+#       total_bins = n(),
+#       bins_with_zero_score = sum(score_value == 0, na.rm = TRUE),
+#       .groups = "drop"
+#     ) |> 
+#     mutate(percentage_zero = (bins_with_zero_score / total_bins) * 100) |> 
+#     arrange(desc(bins_with_zero_score))
+#   
+#   # Only return what is defined!
+#   return(list(zeroScoreSummary = zero_score_summary))
+# }
+# zeroscore_list <- map(spe_list, zeroscore_fun)
+# walk(zeroscore_list, \(el) {print(el$percentage_zero[1])})
+
+zeroscore_fun <- function(subset){
+  cd_df <- colData(subset) |> as_tibble()
+  
+  # zero score summary info
+  zero_score_summary <- cd_df |> 
+    select(barcode, assigned_type = cell_type, all_of(score_cols)) |> 
+    pivot_longer(
+      cols = all_of(score_cols), 
+      names_to = "score_type", 
+      values_to = "score_value"
+    ) |> 
+    filter(assigned_type == score_type) |> 
+    group_by(assigned_type) |> 
+    summarise(
+      total_bins = n(),
+      bins_with_zero_score = sum(score_value == 0, na.rm = TRUE),
+      .groups = "drop"
+    ) |> 
+    mutate(percentage_zero = (bins_with_zero_score / total_bins) * 100) |> 
+    arrange(desc(bins_with_zero_score))
+  
+  # Only return what is defined!
+  return(list(zeroScoreSummary = zero_score_summary))
+}
+zeroscore_list <- map(subset_list, zeroscore_fun)
+walk(zeroscore_list, \(el) {print(el$percentage_zero[1])})
+```
+
+# Analisi per tutta la lista dei campioni
+```{r}
+#spe_list <- map(spe_list, \(spe) {spe <- fix_spe_celltypes(spe, score_cols)})
+subset_list <- map(subset_list, \(spe) {spe <- fix_spe_celltypes(spe, score_cols)})
+map(subset_list, \(x){table(x$new_cell_type)})
+
+#saveRDS(subset_list, file = "subset_list_updated.rds")
+
+```
+
+#proportions
+```{r}
+prop_df_ordered <- imap_dfr(subset_list_updated, function(spe, name) {
+  tab <- base::table(colData(spe)[["new_cell_type"]])
+  prop <- prop.table(tab)
+  tissue_type <- unique(spe$tissue_type)
+  data.table(
+    sample_id = name,
+    cell_type = names(prop),
+    proportion = as.numeric(prop),
+    tissue_type = as.character(tissue_type)
+  )
+}) |> 
+  # lower case otherwise S is before f and m
+  arrange(stringr::str_to_lower(tissue_type), sample_id) |>
+  mutate(sample_id = fct_inorder(sample_id))
+
+# vertical bars
+ggplot(prop_df_ordered, aes(x = sample_id, y = proportion, fill = cell_type)) +
+  geom_col() +                             # geom_col uses the y value directly (identity)
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  scale_fill_manual(values = color_vector) +# use your named color_vector; otherwise use scale_fill_brewer()
+  labs(x = "Sample", y = "Proportion", fill = "Cell type") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+ggsave("~/prop_samples_updated.png", width = 10, height = 6, dpi = 300)
+```
+
+#proportions by conditions
+```{r}
+prop_df_condition <- imap_dfr(subset_list_updated, function(spe, name) {
+  data.table(
+    tissue_type = as.character(spe$tissue_type),
+    cell_type = colData(spe)[["new_cell_type"]]
+  ) |> 
+    filter(!is.na(cell_type))
+}) |> 
+  arrange(stringr::str_to_lower(tissue_type)) |> 
+  dplyr::count(tissue_type, cell_type) |>
+  group_by(tissue_type) |>
+  mutate(proportion = n / sum(n)) |>
+  ungroup()
+
+
+ggplot(prop_df_condition, aes(x = tissue_type, y = proportion, fill = cell_type)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = color_vector) +
+  theme_minimal() +
+  labs(
+    title = "Proporzioni dei tipi cellulari per condizione",
+    x = "Condizione (tissue_type)",
+    y = "Proporzione",
+    fill = "Tipo Cellulare"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggsave("~/prop_updated.png", width = 10, height = 6, dpi = 300)
+```
+
+#Boxplots 
+```{r boxplot-chunk, eval = !params$partial_data}
+# This chunk will not run if partial_data == FALSE
+prop_per_sample <- imap_dfr(spe_list, function(spe, name) {
+  cd <- as.data.table(SummarizedExperiment::colData(spe))
+  cd |>
+    filter(!is.na(.data[["new_cell_type"]])) |>
+    dplyr::count(.data[["new_cell_type"]], name = "count") |>
+    mutate(proportion  = count / sum(count),
+           sample      = name,
+           tissue_type = paste(unique(as.character(cd$tissue_type)), collapse = ", ")) |> 
+    dplyr::rename(cell_type = all_of("new_cell_type"))
+})
+
+ggplot(prop_per_sample, aes(x = tissue_type, y = proportion, fill = tissue_type)) +
+  geom_boxplot(outlier.shape = 21) +
+  facet_wrap(~ cell_type, scales = "free_y") +
+  scale_fill_manual(values = c("sham" = "#1b9e77", "c26" = "#d95f02")) +
+  theme_minimal(base_size = 12) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "Distribuzione proporzioni cell_type per tissue_type",
+       x = "Tissue type",
+       y = "Proporzione")
+
+ggsave("~/repositories/cachetic_visiumHD/figures/output_R/emma_RCTD_by_me/boxplot_celltype_prop_by_cond.png", width = 10, height = 6, dpi = 300)
+```
+
+#Proiezioni sul tessuto
+```{r}
+subset_list_updated <- readRDS("~/subset_list_updated.rds")
+# subset_list_updated <- lapply(subset_list_updated, function(spe) {
+#    keep <- !is.na(spe$new_cell_type) & colSums(counts(spe)) > 0
+#    spe[,keep]
+# })
+
+#saveRDS(subset_list_updated, file = "subset_list_updated.rds")
+
+for (spe_name in names(subset_list_updated)) {
+  spe <- subset_list_updated[[spe_name]]
+  # ws <- colData(spe)[,seq(8,22,1)]
+  # p <- lapply(names(ws), function(nm) {
+  # plotCoords(spe, annotate = nm, point_size = 0.1) +
+  #   scale_color_gradientn(
+  #     colors = rev(hcl.colors(9, "Rocket")),
+  #     limits = c(0, 1)  # fissa scala da 0 a 1
+  #   ) +
+  #   ggtitle(nm)
+  # })
+
+  # final_plot <- wrap_plots(p, nrow = 3, ncol = 5, guides = "collect") &
+  # theme(
+  #   legend.key.width = unit(0.5, "lines"),
+  #   legend.key.height = unit(1, "lines"),
+  #   strip.text = element_text(size = 5)
+  # ) &
+  # scale_color_gradientn(colors = rev(hcl.colors(9, "Rocket")), limits = c(0, 1))
+  # 
+  # ggsave(paste0(spe_name, "_types.png"), final_plot, width = 10, height = 8, dpi = 300)
+  
+your_color_vector <- c(
+    "Endothelial" = "#0072B2",       # blu vivo
+    "FAPs" = "#009E73",              # verde vivo
+    "Immune_Cells" = "#D55E00",      # arancione-rosso
+    "MuSC" = "#E69F00",              # arancione
+    "Myonuclei_IIb" = "#CC79A7",     # magenta
+    "Myonuclei_IIx" = "#56B4E9",     # azzurro chiaro
+    "Myonuclei_IIx_IIa" = "#F0E442", # giallo
+    "Myonuclei_IIx_IIb" = "#9B59B6", # viola chiaro
+    "Myonuclei_MTJ" = "#0099B4",     # turchese
+    "Myonuclei_NMJ" = "#DDAA33",     # senape
+    "Myonuclei_Trim63" = "#CC3311",  # rosso scuro
+    "Nervous_System" = "#44AA99",    # verde acqua
+    "Pericyte" = "#AA4499",          # viola/rosa
+    "Smooth_Muscular" = "#332288",   # blu-viola scuro
+    "Tenocyte" = "#A3E635"           # verde lime
+)
+
+stat1 <- plotCoords(spe, annotate = "new_cell_type", point_size = 0.5) +
+    scale_color_manual(values = your_color_vector) +
+    theme(
+      legend.key.width = unit(0.5, "lines"),
+      legend.key.height = unit(1, "lines")
+    )
+
+ggsave(paste0(spe_name, "_dec.png"), stat1, width = 10, height = 8, dpi = 300)
+}
+  
+```
+
+#FOCUS SULLE IMMUNE CELLS
+```{r}
+#subset_list_updated <- readRDS("~/subset_list_updated.rds")
+
+ default_color <- "lightgrey"
+  your_color_vector <- setNames(
+    rep(default_color, 2),
+    c("Immune","other")
+  )
+  your_color_vector["Immune"]  <- "darkorange"
+
+for (spe_name in names(subset_list_updated)) {
+  spe <- subset_list_updated[[spe_name]]
+  # ws <- colData(spe)[,seq(8,22,1)]
+  # p <- lapply(names(ws), function(nm) {
+  # plotCoords(spe, annotate = nm, point_size = 0.1) +
+  #   scale_color_gradientn(
+  #     colors = rev(hcl.colors(9, "Rocket")),
+  #     limits = c(0, 1)  # fissa scala da 0 a 1
+  #   ) +
+  #   ggtitle(nm)
+  # })
+
+  # final_plot <- wrap_plots(p, nrow = 3, ncol = 5, guides = "collect") &
+  # theme(
+  #   legend.key.width = unit(0.5, "lines"),
+  #   legend.key.height = unit(1, "lines"),
+  #   strip.text = element_text(size = 5)
+  # ) &
+  # scale_color_gradientn(colors = rev(hcl.colors(9, "Rocket")), limits = c(0, 1))
+  # 
+  # ggsave(paste0(spe_name, "_types.png"), final_plot, width = 10, height = 8, dpi = 300)
+  spe$imm_cell <- factor(ifelse(spe$new_cell_type == "Immune_Cells", 1, 0),
+                       levels = c(0, 1),
+                       labels = c("other", "Immune"))
+  stat1 <- plotCoords(spe, annotate = "imm_cell", point_size = 0.9) +
+    scale_color_manual(values = your_color_vector, na.value = default_color) +
+    theme(
+      legend.key.width = unit(0.5, "lines"),
+      legend.key.height = unit(1, "lines")
+    )
+  ggsave(paste0(spe_name, "_imm_cells.png"), stat1, width = 10, height = 8, dpi = 300)
+}
+
+```
+
+#Table to see proportions 
+```{r}
+
+#subset_list_updated <- readRDS("~/subset_list_updated.rds")
+
+#by sample
+celltype_table <- lapply(names(subset_list_updated), function(sample_name) {
+  spe <- subset_list_updated[[sample_name]]
+  df <- as.data.frame(colData(spe))
+  df <- df %>%
+    group_by(new_cell_type) %>%
+    summarise(count = n()) %>%
+    mutate(proportion = count / sum(count),
+           sample = sample_name)
+  df
+}) %>%
+  bind_rows()
+
+celltype_matrix <- celltype_table %>%
+  select(sample, new_cell_type, proportion) %>%
+  pivot_wider(names_from = new_cell_type, values_from = proportion, values_fill = 0)
+
+celltype_matrix
+write_xlsx(celltype_matrix, "rctd16_prop_per_sample.xlsx")
+
+#by condition
+ct_long <- lapply(subset_list_updated, function(spe) {
+  data.frame(
+    tissue_type = unique(spe$tissue_type), 
+    cell_type   = spe$new_cell_type
+  )
+}) %>%
+  bind_rows()
+
+counts <- ct_long %>%
+  count(tissue_type, cell_type, name = "n")
+
+props <- counts %>%
+  group_by(tissue_type) %>%
+  mutate(prop = n / sum(n)) %>%
+  ungroup()
+
+props_wide <- props %>%
+  select(tissue_type, cell_type, prop) %>%
+  pivot_wider(names_from = cell_type, values_from = prop, values_fill = 0)
+
+write_xlsx(props_wide, path = "rctd16_prop_cond.xlsx")
+
+```
+

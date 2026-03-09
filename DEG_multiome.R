@@ -14,27 +14,7 @@ multiome_sce <- readRDS("~/multiome_sce.rds")
 multiome_sce
 multiome_sham <- multiome_sce[,multiome_sce$condition == "SHAM"]
 
-#CON CLUSTER EXPERIMENT ---------------------------------------------------------------
-# library(clusterExperiment)
-# #trova logcounts o specifica trasformazione sotto
-# clust_spe <- ClusterExperiment(object = as.matrix(logcounts(multiome_sham)),
-#                                clusters = multiome_sham$subclusters)
-# ce<-makeDendrogram(clust_spe) #capire parametri: reduceMethod="var", nDims=500
-# 
-# plotDendrogram(ce)
-# #i DEG sono riferiti ai nodi del dendogramma, quindi devo ritrovare quelli
-# #corrispondenti ad ogni cluster
-# #sandri dice di fare questa cosa per i myo mentre gli altri di trattarli normalmente
-# #non so se davvero serve questa funzione, a questo punto forse posso solo fare dei DEG 
-# #più rifiniti sotto..
-# plotHeatmap(ce)
-# 
-# #molto lento 
-# bestDendro <- getBestFeatures(ce,contrastType="Dendro",
-#                               DEMethod="edgeR",p.value=0.05,number=NROW(clust_spe))
-# head(bestDendro)
-
-#DEG classici --------------------------------------------------------------------------------------
+#DEG  ------------------------------------------------------------------------------
 pb_mult <- aggregateAcrossCells(multiome_sham, use.assay.type = "counts", 
                                 id=DataFrame(label = multiome_sham$subclusters,
                                              sample = multiome_sham$dataset))
@@ -292,4 +272,302 @@ lapply(overlap, table)
 ##confermo che i myonuclei fanno schifo il resto +- c'è
 save(markers_paper, file="markers_paper.RData")
 
+#DOTPLOTS --------------------------------------------------------------------------
+load("~/markers_deg.RData")
+multiome_sce <- readRDS("~/multiome_sce.rds")
+library(scater)
 
+for (name in names(markers_deg)) {
+  
+  genes <- markers_deg[[name]]
+  
+  p <- plotDots(
+    multiome_sham,
+    features = genes,
+    group = "subclusters",
+    assay.type = "logcounts" #provato anche con i counts non cambia molto
+  ) + theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+  
+  ggsave(
+    filename = paste0("dotplot_", name, ".png"),
+    plot = p,
+    width = 8,
+    height = 6
+  )
+}
+
+#HEATMAP -----------------------------------------------------------------------------
+library(ComplexHeatmap)
+library(circlize)
+multiome_sham <- multiome_sce[,multiome_sce$condition == "SHAM"]
+
+all_genes <- unlist(markers_deg)
+names(markers_deg) <- c("m_endo", "m_faps", "m_imm", "m_musc", "m_nersys", "m_peri", "m_sm",
+                        "m_teno", "m_m2b", "m_m2x", "m_m2x2a", "m_m2x2b", "m_mmtj", "m_mnmj",
+                        "m_trim")
+gene_group <- rep(names(markers_deg), lengths(markers_deg))
+
+mat <- logcounts(multiome_sham)[all_genes, ]
+
+# media per subcluster (aggregazione cellule)
+group <- multiome_sham$subclusters
+mat_avg <- sapply(unique(group), function(g) {
+  rowMeans(mat[, group == g, drop = FALSE])
+})
+
+# ordina geni per gruppo
+ord <- order(gene_group)
+mat_avg <- mat_avg[ord, ]
+gene_group <- gene_group[ord]
+
+mat_t <- t(mat_avg)
+
+# annotazione ora sulle colonne
+col_anno <- HeatmapAnnotation(
+  group = gene_group,
+  show_annotation_name = FALSE
+)
+
+ht <- Heatmap(
+  mat_t,
+  name = "expr",
+  
+  top_annotation = col_anno,
+  
+  cluster_rows = TRUE,
+  cluster_columns = FALSE,
+  
+  show_column_names = FALSE,
+  
+  column_split = gene_group,
+  
+  #dimensioni testo
+  row_names_gp = grid::gpar(fontsize = 8),
+  column_title_gp = grid::gpar(fontsize = 8),
+  row_title_gp = grid::gpar(fontsize = 9)
+)
+
+png("heatmap_transposed.png",
+    width = 3000,
+    height = 1500,
+    res = 300)
+
+draw(ht)
+
+dev.off()
+
+#HEATMAP CON MARKERS PAPER ------------------------------------------------------------
+library(ComplexHeatmap)
+library(circlize)
+load("~/markers_paper.RData")
+multiome_sce <- readRDS("~/multiome_sce.rds")
+
+all_genes <- unlist(markers_paper)
+names(markers_paper) <- c("m_endo", "m_faps", "m_imm", "m_musc", "m_peri", "m_sm",
+                        "m_teno", "m_m2b", "m_m2x", "m_mmtj", "m_mnmj")
+
+out_genes <- all_genes[!(all_genes %in% rownames(multiome_sce))]
+rename_map <- c(
+  "Gatsl2" = "Castor2",
+  "Mical22" = "Mical2",
+  "Fam19a4" = "Tafa4",
+  "Map3k/cl" = "Map3k"
+)
+markers_paper <- lapply(markers_paper, function(x) {
+  x[x %in% names(rename_map)] <- rename_map[x[x %in% names(rename_map)]]
+  unique(x)
+})
+all_genes <- all_genes[all_genes %in% rownames(multiome_sce)]
+gene_group <- unlist(lapply(names(markers_paper), function(nm) {
+  genes <- markers_paper[[nm]]
+  genes <- genes[genes %in% all_genes]  # solo quelli presenti
+  rep(nm, length(genes))
+}))
+
+# estrai matrice espressione
+mat <- logcounts(multiome_sce)[all_genes, ]
+# media per subcluster (aggregazione cellule)
+group <- multiome_sce$subclusters
+mat_avg <- sapply(unique(group), function(g) {
+  rowMeans(mat[, group == g, drop = FALSE])
+})
+
+# ordina geni per gruppo
+ord <- order(gene_group)
+mat_avg <- mat_avg[ord, ]
+gene_group <- gene_group[ord]
+
+mat_t <- t(mat_avg)
+
+# annotazione ora sulle colonne
+col_anno <- HeatmapAnnotation(
+  group = gene_group,
+  show_annotation_name = FALSE
+)
+
+ht <- Heatmap(
+  mat_t,
+  name = "expr",
+  
+  top_annotation = col_anno,
+  
+  cluster_rows = TRUE,
+  cluster_columns = FALSE,
+  
+  show_column_names = FALSE,
+  
+  column_split = gene_group,
+  
+  # ↓ dimensioni testo
+  row_names_gp = grid::gpar(fontsize = 8),
+  column_title_gp = grid::gpar(fontsize = 8),
+  row_title_gp = grid::gpar(fontsize = 9)
+)
+
+png("heatmap_paper_markers.png",
+    width = 3000,
+    height = 1500,
+    res = 300)
+
+draw(ht)
+
+dev.off()
+
+##HEATMAP CON MARCATORI DI IDENTITA' ------------------------------------------------------------
+library(ComplexHeatmap)
+library(circlize)
+markers <- readRDS("~/marker_genes_list_singleR_annot.rds")
+multiome_sce <- readRDS("~/multiome_sce.rds")
+
+rename_map <- c(
+  "Ncam"   = "Ncam1",
+  "Cd140a" = "Pdgfra",
+  "Sca1"   = "Atxn1"
+)
+markers <- lapply(markers, function(x) {
+  x[x %in% names(rename_map)] <- rename_map[x[x %in% names(rename_map)]]
+  unique(x)
+})
+
+all_genes <- unlist(markers)
+names(markers) <- c("m_sm", "m_2b", "m_2x", "m_2x2a", "m_m2x2b",
+                    "m_mtj", "m_nmj", "m_trim", "m_faps", "m_endo",
+                    "m_musc", "m_teno", "m_imm", "m_nersys", "m_peri"
+)
+
+gene_group <- rep(names(markers), lengths(markers))
+mat <- logcounts(multiome_sce)[all_genes, ]
+
+# media per subcluster (aggregazione cellule)
+group <- multiome_sce$subclusters
+mat_avg <- sapply(unique(group), function(g) {
+  rowMeans(mat[, group == g, drop = FALSE])
+})
+
+# ordina geni per gruppo
+ord <- order(gene_group)
+mat_avg <- mat_avg[ord, ]
+gene_group <- gene_group[ord]
+
+mat_t <- t(mat_avg)
+
+# annotazione ora sulle colonne
+col_anno <- HeatmapAnnotation(
+  group = gene_group,
+  show_annotation_name = FALSE
+)
+
+ht <- Heatmap(
+  mat_t,
+  name = "expr",
+  
+  top_annotation = col_anno,
+  
+  cluster_rows = TRUE,
+  cluster_columns = FALSE,
+  
+  show_column_names = FALSE,
+  
+  column_split = gene_group,
+
+  row_names_gp = grid::gpar(fontsize = 8),
+  column_title_gp = grid::gpar(fontsize = 8),
+  row_title_gp = grid::gpar(fontsize = 9)
+)
+
+png("heatmap_identity_markers.png",
+    width = 3000,
+    height = 1500,
+    res = 300)
+
+draw(ht)
+
+dev.off()
+
+#PROIETTO NEL TESSUTO I DEG CHE SEMBRANO MEGLIO DAI DOTPLOT ---------------------------------------
+load("~/subset_list.RData")
+load("~/markers_deg.RData")
+
+library(ggplot2)
+library(SpatialExperiment)
+library(patchwork)
+
+spe <- subset_list$sham_b1
+
+for (list_name in names(markers_deg)) {
+  
+  markers <- markers_deg[[list_name]]
+  
+  # Prendi al massimo i primi 10
+  markers <- markers[1:min(10, length(markers))]
+  
+  # Tieni solo quelli presenti nello spe
+  markers <- markers[markers %in% rownames(spe)]
+  
+  if (length(markers) == 0) next
+  
+  expr_matrix <- counts(spe)[markers, , drop = FALSE]
+  
+  plot_list <- list()
+  
+  for (i in seq_along(markers)) {
+    
+    marker <- markers[i]
+    expr <- as.numeric(expr_matrix[marker, ])
+    
+    coords <- as.data.frame(spatialCoords(spe))
+    colnames(coords) <- c("x_coord", "y_coord")
+    coords$expr <- expr
+    
+    p <- ggplot(coords, aes(x = x_coord, y = y_coord, color = expr)) +
+      geom_point(size = 0.3) +
+      coord_fixed() +
+      scale_y_reverse() +
+      ggtitle(marker) +
+      theme_void() +
+      theme(plot.title = element_text(size = 8)) +
+      scale_color_gradientn(colors = rev(hcl.colors(9, "Rocket")))
+    
+    plot_list[[i]] <- p
+  }
+  
+  # Dividi in due gruppi (max 5 per riga)
+  first_half  <- wrap_plots(plot_list[1:min(5, length(plot_list))], ncol = 5)
+  
+  if (length(plot_list) > 5) {
+    second_half <- wrap_plots(plot_list[6:length(plot_list)], ncol = 5)
+    combined_plot <- first_half / second_half
+  } else {
+    combined_plot <- first_half
+  }
+  
+  ggsave(
+    filename = paste0("plot_sham_b1_", list_name, "_top10.png"),
+    plot = combined_plot,
+    width = 20,
+    height = 8,
+    dpi = 300
+  )
+}

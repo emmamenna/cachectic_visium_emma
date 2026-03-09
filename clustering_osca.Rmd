@@ -1,0 +1,294 @@
+---
+title: "clustering_osca"
+output: html_document
+date: "2026-02-22"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(scran)
+library(SingleCellExperiment)
+library(SpatialExperiment)
+library(bluster)
+library(ggplot2)
+library(ggspavis)
+library(readxl)
+library(scater)
+```
+
+#Lettura dati
+```{r}
+load("~/subset_list.RData")
+#spe <- subset_list$sham_b3
+#la normalizzazione non funzionava per i conteggi troppo bassi (fattori negativi bla bla)
+# load("~/spe_list_8bin.RData")
+# spe_list <- lapply(spe_list, function(spe) {
+#    keep <- colSums(counts(spe)) > 0
+#    spe[,keep]
+# })
+# spe <- spe_list$blocco1_sham
+```
+
+#CLUSTERING SHAM_B1
+```{r}
+sham_b1 <- subset_list$sham_b1
+
+#normalization
+sham_b1 <- logNormCounts(sham_b1)
+
+#feature selection
+dec.pbmc <- modelGeneVar(sham_b1)
+top5000_genes <- getTopHVGs(dec.pbmc, n = 5000)
+sham_b1 <- sham_b1[top5000_genes,]
+
+#PCA
+set.seed(100)
+sham_b1 <- fixedPCA(sham_b1, subset.row=top5000_genes) 
+
+#walktrap
+set.seed(637)
+nn.clusters <- clusterCells(sham_b1, use.dimred="PCA")
+table(nn.clusters)
+sham_b1$clusters <- nn.clusters
+
+#Clusters labelling
+# levels(sham_b1$clusters)[levels(sham_b1$clusters) %in% c("1","2","4","8","9","11","12")] <- "undefined"
+# levels(sham_b1$clusters)[levels(sham_b1$clusters) == "3"] <- "myonuclei_2b"
+# levels(sham_b1$clusters)[levels(sham_b1$clusters) == "5"] <- "myonuclei_2x"
+# levels(sham_b1$clusters)[levels(sham_b1$clusters) %in% c("6","7","10")] <- "myonuclei_2x2b"
+#plotCoords(sham_b1, annotate = "clusters", point_size = 0.8)
+
+#secondo step
+#table(sham_b1$clusters)
+sham_b1_riclustering <- sham_b1[, sham_b1$clusters == "undefined"]
+clusters2 <- clusterCells(sham_b1_riclustering, use.dimred = "PCA")
+sham_b1_riclustering$clusters2 <- as.factor(clusters2)
+combined_levels <- union(levels(as.factor(sham_b1$clusters)), levels(sham_b1_riclustering$clusters2))
+sham_b1$clusters2 <- factor(sham_b1$clusters, levels = combined_levels)
+sham_b1$clusters2[sham_b1$clusters == "undefined"] <- sham_b1_riclustering$clusters2
+table(sham_b1$clusters2)
+
+#dotplot per secondo step
+markers <- read.table("~/geni_identita.txt")
+markers <- as.vector(unlist(markers))
+markers <- unique(markers)
+
+spe <- subset_list$sham_b1
+spe <- logNormCounts(spe)
+spe$clusters_2step <- sham_b1$clusters2
+
+# plotDots(
+#   spe,
+#   features = markers,
+#   group = "clusters_2step",
+#   assay.type = "logcounts"
+# )
+
+#saveRDS(nn.clusters, file = "~/clusters_wt_shamb1_16bin.rds")
+
+#PROPORZIONI
+
+
+```
+
+#CLUSTERING SHAM_B3
+```{r}
+sham_b3 <- subset_list$sham_b3
+
+#normalization
+sham_b3 <- logNormCounts(sham_b3)
+
+#feature selection
+dec.pbmc <- modelGeneVar(sham_b3)
+top5000_genes <- getTopHVGs(dec.pbmc, n = 5000)
+sham_b3 <- sham_b3[top5000_genes,]
+
+#PCA
+set.seed(100)
+sham_b3 <- fixedPCA(sham_b3, subset.row=top5000_genes) 
+
+#walktrap
+set.seed(637)
+nn.clusters <- clusterCells(sham_b3, use.dimred="PCA")
+table(nn.clusters)
+sham_b3$clusters <- nn.clusters
+#plotCoords(sham_b3, annotate = "clusters", point_size = 0.9)
+
+#Clusters labelling
+levels(sham_b3$clusters)[levels(sham_b3$clusters) %in% c("1","2","3","4","7")] <- "undefined"
+levels(sham_b3$clusters)[levels(sham_b3$clusters) == "10"] <- "myonuclei_2b"
+levels(sham_b3$clusters)[levels(sham_b3$clusters) %in% c("5","9")] <- "myonuclei_2x"
+levels(sham_b3$clusters)[levels(sham_b3$clusters) %in% c("6","8")] <- "myonuclei_2x2b"
+#plotCoords(sham_b3, annotate = "clusters", point_size = 0.9)
+
+#secondo step
+#table(sham_b3$clusters)
+sham_b3_riclustering <- sham_b3[, sham_b3$clusters == "undefined"]
+clusters2 <- clusterCells(sham_b3_riclustering, use.dimred = "PCA")
+table(clusters2)
+sham_b3_riclustering$clusters2 <- as.factor(clusters2)
+combined_levels <- union(levels(as.factor(sham_b3$clusters)), levels(sham_b3_riclustering$clusters2))
+sham_b3$clusters2 <- factor(sham_b3$clusters, levels = combined_levels)
+sham_b3$clusters2[sham_b3$clusters == "undefined"] <- sham_b3_riclustering$clusters2
+table(sham_b3$clusters2)
+
+#dotplot per secondo step
+markers <- read.table("~/geni_identita.txt")
+markers <- as.vector(unlist(markers))
+markers <- unique(markers)
+
+spe <- subset_list$sham_b3
+spe <- logNormCounts(spe)
+spe$clusters_2step <- sham_b3$clusters2
+
+plotDots(
+  spe,
+  features = markers,
+  group = "clusters_2step",
+  assay.type = "logcounts"
+)
+
+saveRDS(nn.clusters, file = "~/clusters_wt_shamb3_16bin.rds")
+
+```
+
+#CLUSTERING NUCLEI SHAM_B1
+```{r}
+sce_arivis_nuclei <- readRDS("~/sce_arivis_nuclei.rds")
+
+#normalization
+sce_arivis_nuclei <- logNormCounts(sce_arivis_nuclei)
+
+#feature selection
+dec.pbmc <- modelGeneVar(sce_arivis_nuclei)
+top5000_genes <- getTopHVGs(dec.pbmc, n = 5000)
+sce_arivis_nuclei <- sce_arivis_nuclei[top5000_genes,]
+
+#PCA
+set.seed(100)
+sce_arivis_nuclei <- fixedPCA(sce_arivis_nuclei, subset.row=top5000_genes) 
+
+#walktrap
+set.seed(637)
+nn.clusters <- clusterCells(sce_arivis_nuclei, use.dimred="PCA")
+table(nn.clusters) #ne vengono solo 4
+sce_arivis_nuclei$clusters <- nn.clusters
+colData(sce_arivis_nuclei)$in_tissue <- TRUE
+plotCoords(sce_arivis_nuclei, annotate = "clusters",
+           x_coord = "x_coord", y_coord = "y_coord", point_size = 0.9)
+
+#DOTPLOT
+# markers <- read.table("~/geni_identita.txt")
+# markers <- as.vector(unlist(markers))
+# markers <- unique(markers)
+# 
+# spe <- readRDS("~/sce_arivis_nuclei.rds")
+# spe <- logNormCounts(spe)
+# spe$clusters <- nn.clusters
+# 
+# plotDots(
+#   spe,
+#   features = markers,
+#   group = "clusters",
+#   assay.type = "logcounts"
+# )
+
+#Clusters labelling
+levels(sce_arivis_nuclei$clusters)[levels(sce_arivis_nuclei$clusters) == "4"] <- "undefined"
+levels(sce_arivis_nuclei$clusters)[levels(sce_arivis_nuclei$clusters) == "1"] <- "myonuclei_2b"
+levels(sce_arivis_nuclei$clusters)[levels(sce_arivis_nuclei$clusters) == "3"] <- "myonuclei_2x"
+levels(sce_arivis_nuclei$clusters)[levels(sce_arivis_nuclei$clusters) == "2"] <- "myonuclei_2x2b"
+plotCoords(sce_arivis_nuclei, annotate = "clusters",
+           x_coord = "x_coord", y_coord = "y_coord", point_size = 0.9)
+
+#secondo step
+sce_arivis_nuclei_riclustering <- sce_arivis_nuclei[, sce_arivis_nuclei$clusters == "undefined"]
+clusters2 <- clusterCells(sce_arivis_nuclei_riclustering, use.dimred = "PCA")
+table(clusters2)
+sce_arivis_nuclei_riclustering$clusters2 <- as.factor(clusters2)
+combined_levels <- union(levels(as.factor(sce_arivis_nuclei$clusters)), levels(sce_arivis_nuclei_riclustering$clusters2))
+sce_arivis_nuclei$clusters2 <- factor(sce_arivis_nuclei$clusters, levels = combined_levels)
+sce_arivis_nuclei$clusters2[sce_arivis_nuclei$clusters == "undefined"] <- sce_arivis_nuclei_riclustering$clusters2
+table(sce_arivis_nuclei$clusters2)
+
+#dotplot per secondo step
+markers <- read.table("~/geni_identita.txt")
+markers <- as.vector(unlist(markers))
+markers <- unique(markers)
+
+spe <- readRDS("~/sce_arivis_nuclei.rds")
+spe <- logNormCounts(spe)
+spe$clusters_2step <- sce_arivis_nuclei$clusters2
+
+plotDots(
+  spe,
+  features = markers,
+  group = "clusters_2step",
+  assay.type = "logcounts"
+)
+
+```
+
+#kmeans
+```{r}
+set.seed(637)
+nn.clusters <- clusterCells(spe, use.dimred="PCA",
+                            BLUSPARAM=KmeansParam(centers=13, iter.max = 20)) #provare con 13
+table(nn.clusters)
+spe$clusters <- nn.clusters
+plotCoords(spe, annotate = "clusters", point_size = 0.8)
+
+```
+
+#Walktrap
+```{r}
+set.seed(637)
+#nn.clusters <- clusterCells(spe, use.dimred="PCA")
+
+#per cambiare parametri:
+# nn.clusters <- clusterCells(
+#   spe,
+#   use.dimred = "PCA",
+#   BLUSPARAM = NNGraphParam(k = 20, cluster.fun = "walktrap",
+#                            cluster.args=list(steps=1))
+# )
+table(nn.clusters)
+
+```
+
+#Leiden
+```{r}
+nn.clusters3 <- clusterCells(spe, use.dimred = "PCA",
+  BLUSPARAM = NNGraphParam(k = 20, cluster.fun = "leiden",
+                           cluster.args=list(resolution=0.2)))
+table(nn.clusters3)
+spe$clusters <- nn.clusters
+plotCoords(spe, annotate = "clusters", point_size = 0.8)
+```
+
+#Dotplot x annotazione
+```{r}
+markers <- read.table("~/geni_identita.txt")
+markers <- as.vector(unlist(markers))
+markers <- unique(markers)
+
+#ATT: richiamarlo perché ho fatto il subset dei geni
+#spe <- spe_list$blocco1_sham
+#
+spe <- subset_list$sham_b3
+spe <- logNormCounts(spe)
+spe$clusters <- nn.clusters
+
+plotDots(
+  spe,
+  features = markers,
+  group = "clusters",
+  assay.type = "logcounts"
+)
+
+```
+
+

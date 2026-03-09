@@ -211,19 +211,18 @@ load("~/markers_list_mixed.RData") #lista aggiornata
 load("~/spe_list_8bin.RData")
 spe <- spe_list$blocco1_sham
 rownames(spatialCoords(spe)) <- colnames(spe)
-coords_spe <- as.data.frame(spatialCoords(spe))
+coords_spe <- as.data.frame(spatialCoords(spe)[,c(1,2)])
+colnames(coords_spe) <- c("x", "y")
 
 ?CARD_refFree
 set.seed(seed = 20200107)
 CARDfree_obj <- CARD_refFree(
-    markerlist = markers_list,
+    markerlist = markers,
     spatial_count = counts(spe),
     spatial_location = coords_spe,
     mincountgene = 100,
     mincountspot = 5
 )
-## STOP! The average number of unique marker genes for each cell
-# type is less than 20 ...
 
 ```
 

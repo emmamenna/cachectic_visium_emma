@@ -42,6 +42,13 @@ library(lme4)
 
 #Deconvolution function
 For each spot the probability for each cell type as well as the label of the principal cell type are saved.
+Three assays (one in full mode):
+
+weights: Cell type proportions restricted according to the specified mode
+weights_unconfident: Cell type proportions restricted according to the specified mode, including unconfident predictions (not available in full mode)
+weights_full: Unrestricted cell type proportions (not available in full mode, use weights instead)
+
+Assays have cell types as rows and pixels as columns, with values representing the proportion (0 to 1) of each cell type in each pixel. Assay columns sum to 1 (except for rejected pixels, which sum to 0).
 ```{r}
 run_my_rctd <- function(spe, sce_ref, out_prefix) {
   set.seed(9237)
@@ -55,15 +62,21 @@ run_my_rctd <- function(spe, sce_ref, out_prefix) {
     cell_type_col = "subclusters"
   )
   
+# For multi mode:
+# cell_type_list: List of cell types per pixel
+# conf_list: List of whether cell type predictions are confident
+# Additional metrics like min_score (likelihood)
+  
   #deconvolution
   results <- runRctd(rctd_data, rctd_mode = "multi")
-  
+
   #weights extraction
   ws <- assay(results, "weights")
   ws <- data.frame(t(as.matrix(ws)))
   colData(spe)[names(ws)] <- ws[colnames(spe), ] 
   
   #Cluster labelling
+  table(rowSums(ws == 1))
   ids <- names(ws)[apply(ws, 1, which.max)]
   ids <- gsub("\\.([A-z])", " \\1", ids)
   idx <- match(colnames(spe), rownames(ws))
@@ -73,6 +86,88 @@ run_my_rctd <- function(spe, sce_ref, out_prefix) {
   assign("subset_list", replace(subset_list, out_prefix, spe), envir = .GlobalEnv)
   invisible(spe)
 }
+```
+
+#diagnostica su Rctd
+```{r}
+prova <- results$cell_type_list
+  results$conf_list
+  results$min_score
+  colData(results)$num_cell_types <- sapply(
+  colData(results)$cell_type_list,
+  length
+)
+
+weights <- assay(results, "weights")
+
+# 2. For each possible cell type, extract weights for each cell if that type is listed in the cell_type_list
+# We'll iterate through all possible cell types (appear in assay rownames)
+for (ct in rownames(weights)) {
+  # For each cell, if that cell type is present in its cell_type_list, record the corresponding weight, otherwise NA
+  colData(results)[[paste0("weight_", ct)]] <-
+    sapply(seq_along(colData(results)$cell_type_list), function(i) {
+      if (ct %in% colData(results)$cell_type_list[[i]]) {
+        weights[ct, i]
+      } else {
+        NA
+      }
+    })
+}
+
+cell_type_weights <- lapply(
+  seq_along(colData(results)$cell_type_list),
+  function(i) {
+    celltypes <- colData(results)$cell_type_list[[i]]
+    setNames(weights[celltypes, i], celltypes)
+  }
+)
+colData(results)$cell_type_weights <- cell_type_weights
+
+# Compute the sum for each cell
+weight_sums <- sapply(colData(results)$cell_type_weights, sum)
+
+# Option 1: Logical vector--Does each cell's sum == 1?
+all_equal_one <- abs(weight_sums - 1) < 1e-6  # Use tolerance for floating-point errors
+table(weight_sums == 0) #lessgo
+
+zero_weight_cells <- which(weight_sums == 0)  # Indices of such cells
+conf_list_for_zero_weights <- colData(results)$conf_list[zero_weight_cells]
+conf_list_for_zero_weights
+table(unlist(conf_list_for_zero_weights))
+#ottimo, tutti cell types FALSE -> PESI ZERO
+
+# conf_list = colData(results)$conf_list
+matches <- sapply(
+  colData(results)$conf_list,
+  function(x) {
+    length(x) > 1 && is.logical(x) && !is.na(x[1]) && x[1] == FALSE && any(x[-1] == TRUE, na.rm = TRUE)
+  }
+)
+
+# The indices (or spot/cell names) where the condition is met
+matching_indices <- which(matches)
+matching_cell_names <- rownames(colData(results))[matching_indices]
+
+# Optional: show, filter, analyze further
+results[,matching_cell_names]$cell_type_weights
+
+cd_df <- colData(spe) |> as_tibble()
+
+cd_df |> 
+  filter(cell_type == "Endothelial", Endothelial != 0) |> 
+  summarise(mean = mean(Endothelial),
+            sd = sd(Endothelial),
+            min = min(Endothelial),
+            max = max(Endothelial),
+            mad = mad(Endothelial))
+cd_df |> 
+  filter(cell_type == "Endothelial") |> 
+  summarise(mean = mean(Endothelial),
+            sd = sd(Endothelial),
+            min = min(Endothelial),
+            max = max(Endothelial),
+            mad = mad(Endothelial))
+
 ```
 
 Creating a list of spatial experiment objects (one for each sample) and applying the deconvolution
@@ -153,32 +248,32 @@ for (spe_name in names(subset_list)) {
 
   ggsave(paste0(spe_name, "_types.png"), final_plot, width = 10, height = 8, dpi = 300)
   
-# your_color_vector <- c(
-#     "Endothelial" = "#0072B2",       # blu vivo
-#     "FAPs" = "#009E73",              # verde vivo
-#     "Immune_Cells" = "#D55E00",      # arancione-rosso
-#     "MuSC" = "#E69F00",              # arancione
-#     "Myonuclei_IIb" = "#CC79A7",     # magenta
-#     "Myonuclei_IIx" = "#56B4E9",     # azzurro chiaro
-#     "Myonuclei_IIx_IIa" = "#F0E442", # giallo
-#     "Myonuclei_IIx_IIb" = "#9B59B6", # viola chiaro
-#     "Myonuclei_MTJ" = "#0099B4",     # turchese
-#     "Myonuclei_NMJ" = "#DDAA33",     # senape
-#     "Myonuclei_Trim63" = "#CC3311",  # rosso scuro
-#     "Nervous_System" = "#44AA99",    # verde acqua
-#     "Pericyte" = "#AA4499",          # viola/rosa
-#     "Smooth_Muscular" = "#332288",   # blu-viola scuro
-#     "Tenocyte" = "#A3E635"           # verde lime
-# )
-# 
-# stat1 <- plotCoords(spe, annotate = "cell_type", point_size = 0.5) +
-#     scale_color_manual(values = your_color_vector) +
-#     theme(
-#       legend.key.width = unit(0.5, "lines"),
-#       legend.key.height = unit(1, "lines")
-#     )
-#   
-# ggsave(paste0(out_prefix, "_dec.png"), stat1, width = 10, height = 8, dpi = 300)
+your_color_vector <- c(
+    "Endothelial" = "#0072B2",       # blu vivo
+    "FAPs" = "#009E73",              # verde vivo
+    "Immune_Cells" = "#D55E00",      # arancione-rosso
+    "MuSC" = "#E69F00",              # arancione
+    "Myonuclei_IIb" = "#CC79A7",     # magenta
+    "Myonuclei_IIx" = "#56B4E9",     # azzurro chiaro
+    "Myonuclei_IIx_IIa" = "#F0E442", # giallo
+    "Myonuclei_IIx_IIb" = "#9B59B6", # viola chiaro
+    "Myonuclei_MTJ" = "#0099B4",     # turchese
+    "Myonuclei_NMJ" = "#DDAA33",     # senape
+    "Myonuclei_Trim63" = "#CC3311",  # rosso scuro
+    "Nervous_System" = "#44AA99",    # verde acqua
+    "Pericyte" = "#AA4499",          # viola/rosa
+    "Smooth_Muscular" = "#332288",   # blu-viola scuro
+    "Tenocyte" = "#A3E635"           # verde lime
+)
+
+stat1 <- plotCoords(spe, annotate = "cell_type", point_size = 0.5) +
+    scale_color_manual(values = your_color_vector) +
+    theme(
+      legend.key.width = unit(0.5, "lines"),
+      legend.key.height = unit(1, "lines")
+    )
+
+ggsave(paste0(out_prefix, "_dec.png"), stat1, width = 10, height = 8, dpi = 300)
 }
   
 ```
