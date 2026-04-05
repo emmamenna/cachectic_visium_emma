@@ -30,13 +30,11 @@ library(SpatialFeatureExperiment)
 library(purrr)
 ```
 
-#DEG trim vs 2b
+#DEG trim c26 vs 2b sham
 ```{r}
-pb_nuclei <- readRDS("~/per_git/pseudobulk_celltype_SingleR_wb7_wdiscard")
-
-pb_nuclei$group <- paste0(pb_nuclei$labels_singler, "_", pb_nuclei$tissue_type)
+pb_nuclei <- readRDS("~/pb_nuclei.rds")
+pb_nuclei$group <- paste0(pb_nuclei$cell_type, "_", pb_nuclei$sampletype)
 pb_sub <- pb_nuclei[, pb_nuclei$group %in% c("Myonuclei_Trim63_c26", "Myonuclei_IIb_sham")]
-
 pb_sub$group <- factor(pb_sub$group, levels = c("Myonuclei_IIb_sham", "Myonuclei_Trim63_c26"))
 
 y <- DGEList(counts(pb_sub), samples = as.data.frame(colData(pb_sub)))
@@ -50,14 +48,28 @@ lrt <- glmLRT(fit, coef = 2)
 top <- topTags(lrt, n = Inf)$table
 top$SYMBOL <- rownames(top)
 
+top$significant <- top$FDR < 0.05
+sig <- top[top$significant, ]
+sig_up <- sig[sig$logFC >= 0, ]
+sig_down <- sig[sig$logFC < 0, ]
+  
+gene_summary <- data.frame(
+    Geni_considerati = nrow(top),
+    Geni_significativi = nrow(sig),
+    Upregolati = nrow(sig_up),
+    Downregolati = nrow(sig_down)
+)
+  
+gene_summary
+
 ```
 
-#TRIM63+ C26 VS 2B SHAM
+#GSEA
 ```{r}
 se <- SummarizedExperiment(assays = list(counts = y$counts),
                              colData = y$samples)
 assay(se, "norm") <- cpm(y, log = TRUE, prior.count = 1)
-se$GROUP <- ifelse(se$tissue_type == "c26", 1, 0)
+se$GROUP <- ifelse(se$sampletype == "c26", 1, 0)
 
 rowData(se)$PVAL     <- top$PValue[match(rownames(se), rownames(top))]
 rowData(se)$FC       <- top$logFC[match(rownames(se), rownames(top))]
@@ -94,6 +106,8 @@ gsea_sig@result$core_enrichment_symbols <-
   sapply(gsea_sig@result$core_enrichment, convert_core_enrichment)
 
 res_df <- as.data.frame(gsea_sig@result)
+
+#saving results
 wb <- createWorkbook()
 addWorksheet(wb, "GSEA_Results")
 writeData(wb, sheet = "GSEA_Results", x = res_df, rowNames = TRUE)
@@ -103,8 +117,7 @@ saveWorkbook(wb, file = "gsea_nuclei_trim_2b.xlsx", overwrite = TRUE)
 
 #DEG trim vs overall
 ```{r}
-pb_nuclei <- readRDS("~/per_git/pseudobulk_celltype_SingleR_wb7_wdiscard")
-pb_nuclei$group <- paste0(pb_nuclei$labels_singler, "_", pb_nuclei$tissue_type)
+pb_nuclei$group <- paste0(pb_nuclei$cell_type, "_", pb_nuclei$sampletype)
 mio_ov_sham <- unique(grep(paste0("^", "Myonuclei", ".*", "sham"), pb_nuclei$group, value = TRUE))
 pb_sub <- pb_nuclei[, pb_nuclei$group %in% c("Myonuclei_Trim63_c26", mio_ov_sham)]
 pb_sub$group[pb_sub$group %in% mio_ov_sham] <- "Myonuclei_sham"
@@ -123,6 +136,21 @@ fit <- glmFit(y, design)
 lrt <- glmLRT(fit, coef = 2)
 top <- topTags(lrt, n = Inf)$table
 top$SYMBOL <- rownames(top)
+
+top$significant <- top$FDR < 0.05
+sig <- top[top$significant, ]
+sig_up <- sig[sig$logFC >= 0, ]
+sig_down <- sig[sig$logFC < 0, ]
+  
+gene_summary <- data.frame(
+    Geni_considerati = nrow(top),
+    Geni_significativi = nrow(sig),
+    Upregolati = nrow(sig_up),
+    Downregolati = nrow(sig_down)
+)
+  
+gene_summary
+
 ```
 
 #TRIM63+ C26 VS OVERALL SHAM

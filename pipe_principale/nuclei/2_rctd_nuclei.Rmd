@@ -1,0 +1,690 @@
+---
+title: "Nuclei annotation with Rctd"
+author: "Emma Menna"
+output: html_document
+date: "2026-03-09"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Libraries
+```{r, include=FALSE}
+library(arrow)
+library(Banksy)
+library(BiocParallel)
+library(DropletUtils)
+library(dplyr)
+library(edgeR)
+library(ggplot2)
+library(graphics)
+library(igraph)
+library(jsonlite)
+library(Matrix)
+library(OSTA.data)
+library(patchwork)
+library(pheatmap)
+library(S4Vectors)
+library(scDblFinder)
+library(scater)
+library(scran)
+library(scuttle)
+library(SingleCellExperiment)
+library(SpatialExperiment)
+library(SummarizedExperiment)
+library(tidyr)
+library(VisiumIO)
+library(spacexr)
+library(SpotSweeper)
+library(ggspavis)
+library(writexl)
+library(lme4)
+library(purrr)
+```
+
+#Objects
+```{r}
+sce_ref <- readRDS("~/multiome_sce.rds") #reference dataset
+nuclei_list_raw <- readRDS("~/nuclei_list_raw.rds")
+
+color_vector <- c(
+    "Endothelial" = "#0072B2",       # blu vivo
+    "FAPs" = "#009E73",              # verde vivo
+    "Immune_Cells" = "#D55E00",      # arancione-rosso
+    "MuSC" = "#E69F00",              # arancione
+    "Myonuclei_IIb" = "#CC79A7",     # magenta
+    "Myonuclei_IIx" = "#56B4E9",     # azzurro chiaro
+    "Myonuclei_IIx_IIa" = "#F0E442", # giallo
+    "Myonuclei_IIx_IIb" = "#9B59B6", # viola chiaro
+    "Myonuclei_MTJ" = "#0099B4",     # turchese
+    "Myonuclei_NMJ" = "#DDAA33",     # senape
+    "Myonuclei_Trim63" = "#CC3311",  # rosso scuro
+    "Nervous_System" = "#44AA99",    # verde acqua
+    "Pericyte" = "#AA4499",          # viola/rosa
+    "Smooth_Muscular" = "#332288",   # blu-viola scuro
+    "Tenocyte" = "#A3E635"           # verde lime
+)
+
+```
+
+#Exploratory analysis on nuclei
+```{r}
+estrai_info <- lapply(nuclei_list, function(spe){
+    n_spot_iniziale <- ncol(spe)
+    n_spot_filtrati <- sum(spe$to_discard == "FALSE")
+    total_umi <- sum(colSums(counts(spe)[, spe$to_discard == "FALSE"]))
+    n_geni <- sum(rowSums(counts(spe)[, spe$to_discard == "FALSE"]) != 0)
+    data.frame(
+      Condition = unique(spe$sampletype),
+      Block = unique(spe$blocco),
+      Spot_number = n_spot_iniziale,
+      Not_inflamed_spots = n_spot_filtrati,
+      Total_UMI = total_umi,
+      Detected_genes = n_geni
+    )
+})
+
+tabella_finale <- do.call(rbind, estrai_info)
+#write_xlsx(tabella_finale, path = "expl_analysis_nuclei.xlsx")
+
+```
+
+#Deconvolution function
+Using "doublets" mode because these are not spots.
+I set UMI_min very low considering the low counts in nuclei
+and having assessed the difficulty of this algorithm in
+attributing a significant annotation.
+```{r}
+run_rctd_doublet <- function(spe, sce_ref, out_prefix) {
+  set.seed(9237)
+  
+  # data preparation
+  rctd_data <- createRctd(
+    spatial_experiment = spe,
+    reference_experiment = sce_ref,
+    cell_type_col = "subclusters",
+    UMI_min = 10,
+    UMI_min_sigma = 50,
+  )
+  
+  # deconvolution in doublet mode
+  results <- runRctd(rctd_data, rctd_mode = "doublet")
+
+  pixels <- colnames(assay(results))
+  
+  first_type_map  <- setNames(colData(results)$first_type, pixels)
+  second_type_map <- setNames(colData(results)$second_type, pixels)
+  class_map       <- setNames(colData(results)$spot_class, pixels)
+  
+  spe$cell_type   <- first_type_map[as.character(spe$cell_id)]
+  spe$second_type <- second_type_map[as.character(spe$cell_id)]
+  spe$spot_class  <- class_map[as.character(spe$cell_id)]
+  
+  print(table(spe$spot_class, useNA = "ifany"))
+  
+  assign("nuclei_list", replace(nuclei_list, out_prefix, spe), envir = .GlobalEnv)
+  
+  invisible(spe)
+}
+```
+
+#Rctd on all samples
+```{r}
+#changing assays name if needed
+for (i in seq_along(nuclei_list)) {
+  assayNames(nuclei_list[[i]])[assayNames(nuclei_list[[i]]) == "X"] <- "counts"
+}
+
+for (name in nuclei_list) {
+    run_rctd_doublet(nuclei_list[[name]], sce_ref, name)
+}
+```
+
+#Fixing rctd results
+```{r}
+#1. removing cells with NA cell type
+nuclei_list <- lapply(nuclei_list, function(spe) {
+   keep <- !is.na(spe$cell_type) & colSums(counts(spe)) > 0
+   spe[,keep]
+})
+
+#2. manual correction on MuSC annotation: defined as Pax7 expressed or not
+nuclei_list <- lapply(nuclei_list, function(spe) {
+  print(table(spe$cell_type == "MuSC"))
+  pax7_pos <- counts(spe)["Pax7", ] > 0
+  spe$cell_type[pax7_pos] <- "MuSC"
+  print(table(spe$cell_type == "MuSC"))
+  return(spe)
+})
+
+#saving results
+saveRDS(subset_list, file = "nuclei_list_ann.rds")
+```
+
+#projections on tissue with only significantly annotated nuclei
+```{r}
+for (spe_name in names(nuclei_list)) {
+  spe <- nuclei_list[[spe_name]]
+  spe <- spe[,spe$spot_class != "reject" & spe$to_discard == "FALSE"]
+  print(dim(spe))
+  spe$in_tissue <- rep(TRUE,dim(spe)[2])
+  stat1 <- plotCoords(spe, annotate = "cell_type", point_size = 0.9,
+                      x_coord = "y_coord", y_coord = "x_coord") +
+    scale_color_manual(values = color_vector) +
+    theme(
+      legend.key.width = unit(0.5, "lines"),
+      legend.key.height = unit(1, "lines")
+    )
+
+  ggsave(paste0(spe_name, "_dec.png"), stat1, width = 10, height = 8, dpi = 300)
+}
+  
+```
+
+#Barplot to show cell type proportions for each sample
+```{r}
+
+prop_df <- lapply(names(nuclei_list), function(name) {
+  spe <- nuclei_list[[name]]
+  spe <- spe[,spe$spot_class != "reject" & spe$to_discard == "FALSE"] #FACCIO QUA
+  tab <- table(spe$cell_type)
+  prop <- prop.table(tab)
+  data.frame(
+    sample = name,
+    cell_type = names(prop),
+    proportion = as.numeric(prop)
+  )
+}) |> bind_rows()
+
+ggplot(prop_df, aes(x = sample, y = proportion, fill = cell_type)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = color_vector) +
+  theme_minimal() +
+  labs(
+    title = "Proporzioni dei tipi cellulari per campione",
+    x = "Campione (subset_list)",
+    y = "Proporzione",
+    fill = "Tipo Cellulare"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggsave("cell_type_proportions_nuclei.png", width = 10, height = 6, dpi = 300)
+
+```
+
+#Barplot to show cell types proportions for each condition
+```{r}
+prop_df_condition <- lapply(nuclei_list, function(spe) {
+  spe <- spe[, spe$spot_class != "reject" & !spe$to_discard]
+  data.frame(
+    tissue_type = unique(spe$sampletype),
+    cell_type = spe$cell_type
+  )
+}) |> 
+  bind_rows() |> 
+  dplyr::filter(!is.na(cell_type))
+
+prop_df_condition <- prop_df_condition %>% dplyr::count(tissue_type, cell_type) %>% dplyr::group_by(tissue_type) %>% dplyr::mutate(proportion = n / sum(n)) %>% ungroup()
+
+ggplot(prop_df_condition, aes(x = tissue_type, y = proportion, fill = cell_type)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = color_vector) +
+  theme_minimal() +
+  labs(
+    title = "Proporzioni dei tipi cellulari per condizione",
+    x = "Condizione (tissue_type)",
+    y = "Proporzione",
+    fill = "Tipo Cellulare"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggsave("cell_type_proportions_by_condition_nuclei.png", width = 10, height = 6, dpi = 300)
+
+```
+
+#Table to see proportions 
+```{r}
+#by sample
+celltype_table <- lapply(names(nuclei_list), function(sample_name) {
+  spe <- nuclei_list[[sample_name]]
+  spe <- spe[, spe$spot_class != "reject" & !spe$to_discard]
+  df <- as.data.frame(colData(spe))
+  df <- df %>%
+    group_by(cell_type) %>%
+    summarise(count = n()) %>%
+    mutate(proportion = count / sum(count),
+           sample = sample_name)
+  df
+}) %>%
+  bind_rows()
+
+celltype_matrix <- celltype_table %>%
+  select(sample, cell_type, proportion) %>%
+  pivot_wider(names_from = cell_type, values_from = proportion, values_fill = 0)
+
+write_xlsx(celltype_matrix, "celltype_prop_samples_nuclei.xlsx")
+
+#by condition
+ct_long <- lapply(nuclei_list, function(spe) {
+  spe <- spe[, spe$spot_class != "reject" & !spe$to_discard]
+  data.frame(
+    tissue_type = unique(spe$sampletype),
+    cell_type = spe$cell_type
+  )
+}) |> 
+  bind_rows() |> 
+  dplyr::filter(!is.na(cell_type))
+
+counts <- ct_long %>%
+  dplyr::count(tissue_type, cell_type, name = "n")
+
+props <- counts %>%
+  dplyr::group_by(tissue_type) %>%
+  dplyr::mutate(prop = n / sum(n)) %>%
+  dplyr::ungroup()
+
+props_wide <- props %>%
+  select(tissue_type, cell_type, prop) %>%
+  pivot_wider(names_from = cell_type, values_from = prop, values_fill = 0)
+
+write_xlsx(props_wide, path = "celltypes_conditions_nuclei.xlsx")
+
+```
+
+#boxplot of cell type proportions stratified by condition
+```{r}
+prop_per_sample <- purrr::imap_dfr(nuclei_list, function(spe, name) {
+  spe <- spe[, spe$spot_class != "reject" & !spe$to_discard]
+  cd <- as.data.frame(SummarizedExperiment::colData(spe))
+  cd |>
+    dplyr::filter(!is.na(cell_type)) |>
+    dplyr::count(cell_type, name = "count") |>
+    dplyr::mutate(
+      proportion  = count / sum(count),
+      sample      = name,
+      tissue_type = paste(unique(as.character(cd$sampletype)), collapse = ", ")
+    )
+})
+prop_per_sample$tissue_type <- factor(
+  prop_per_sample$tissue_type,
+  levels = c("sham", "c26", "c26STAT3", "c26foxO", "c26murf1", "c26SMAD23")
+)
+ggplot(prop_per_sample, aes(x = tissue_type, y = proportion, fill = tissue_type)) +
+  geom_boxplot(outlier.shape = 21) +
+  facet_wrap(~ cell_type, scales = "free_y") +
+  scale_fill_manual(values = c("sham" = "#1B9E77", "c26" = "#D95F02")) +
+  theme_minimal(base_size = 12) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "Distribuzione proporzioni cell_type per tissue_type",
+       x = "Tissue type",
+       y = "Proporzione")
+ggsave("boxplot_cell_types.png", width = 10, height = 6, dpi = 300)
+
+```
+
+#ADDITIONAL ANALYSIS ---------------------------------------------------------------------------
+
+#I wonder what cell types were assigned to the inflamed areas
+```{r}
+lapply(nuclei_list, function(spe){
+  table(spe$cell_type[spe$to_discard=="TRUE"])
+})
+
+#plotting them
+prop_df <- lapply(names(nuclei_list), function(name) {
+  spe <- nuclei_list[[name]]
+  spe <- spe[,spe$spot_class != "reject" & spe$to_discard == "TRUE"]
+  if (ncol(spe) == 0) return(NULL)
+  tab <- table(spe$cell_type)
+  prop <- prop.table(tab)
+  data.frame(
+    sample = name,
+    cell_type = names(prop),
+    proportion = as.numeric(prop)
+  )
+}) |> bind_rows()
+
+ggplot(prop_df, aes(x = sample, y = proportion, fill = cell_type)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = color_vector) +
+  theme_minimal() +
+  labs(
+    title = "Proporzioni dei tipi cellulari per campione",
+    x = "Campione (subset_list)",
+    y = "Proporzione",
+    fill = "Tipo Cellulare"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggsave("cell_type_proportions_nuclei.png", width = 10, height = 6, dpi = 300)
+
+```
+
+#Now I want to see which cell types the rejected (not significant) annotations would have been
+```{r}
+
+lapply(nuclei_list, function(spe){
+  spe_filtered <- spe[,spe$to_discard=="FALSE"]
+  #table(spe_filtered$spot_class!="reject")
+  round(prop.table(table(spe_filtered$spot_class=="reject")),3)
+})
+
+lapply(nuclei_list, function(spe){
+  table(spe$cell_type[spe$to_discard=="FALSE" & spe$spot_class=="reject"])
+})
+
+#we could look at how proportions change including these
+prop_df <- lapply(names(nuclei_list), function(name) {
+  spe <- nuclei_list[[name]]
+  spe <- spe[,spe$to_discard == "FALSE"]
+  if (ncol(spe) == 0) return(NULL)
+  tab <- table(spe$cell_type)
+  prop <- prop.table(tab)
+  data.frame(
+    sample = name,
+    cell_type = names(prop),
+    proportion = as.numeric(prop)
+  )
+}) |> bind_rows()
+
+ggplot(prop_df, aes(x = sample, y = proportion, fill = cell_type)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = color_vector) +
+  theme_minimal() +
+  labs(
+    title = "Proporzioni dei tipi cellulari per campione",
+    x = "Campione (subset_list)",
+    y = "Proporzione",
+    fill = "Tipo Cellulare"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+prop_df <- lapply(names(nuclei_list), function(name) {
+  spe <- nuclei_list[[name]]
+  spe <- spe[,spe$to_discard == "FALSE" & spe$spot_class =="reject"]
+  if (ncol(spe) == 0) return(NULL)
+  tab <- table(spe$cell_type)
+  prop <- prop.table(tab)
+  data.frame(
+    sample = name,
+    cell_type = names(prop),
+    proportion = as.numeric(prop)
+  )
+}) |> bind_rows()
+
+
+```
+
+#Let's take a look at the second cell type as well
+```{r}
+lapply(nuclei_list, function(spe){
+  table(spe$second_type[spe$to_discard=="FALSE" & spe$spot_class!="reject"])
+})
+
+#second cell type for each first one
+lapply(nuclei_list, function(spe){
+  spe_clean <- spe[,spe$to_discard=="FALSE" & spe$spot_class!="reject"]
+  table(spe_clean$cell_type, spe_clean$second_type)
+})
+
+#plots
+purrr::imap(nuclei_list, function(spe, sample_name) {
+  spe <- spe[, !spe$to_discard & spe$spot_class != "reject"]
+  if (ncol(spe) == 0) return(NULL)
+  cd <- as.data.frame(SummarizedExperiment::colData(spe))
+  cd <- cd %>%
+    filter(!is.na(cell_type), !is.na(second_type))
+  if (nrow(cd) == 0) return(NULL)
+  df <- cd %>%
+    dplyr::count(cell_type, second_type) %>%
+    dplyr::group_by(cell_type) %>%
+    dplyr::mutate(prop = n / sum(n)) %>%
+    dplyr::ungroup()
+
+  p <- ggplot(df, aes(x = "", y = prop, fill = second_type)) +
+    geom_col(width = 1) +
+    coord_polar(theta = "y") +
+    facet_wrap(~cell_type) +
+    scale_fill_manual(values = color_vector) +
+    labs(title = sample_name) +
+    theme_void()
+  
+  ggsave(
+    paste0(sample_name, "_pie_second_type.png"),
+    p,
+    width = 10,
+    height = 8,
+    dpi = 300
+  )
+})
+
+```
+
+#Average on all samples
+```{r}
+all_props <- purrr::imap_dfr(nuclei_list, function(spe, sample_name) {
+  
+  spe <- spe[, !spe$to_discard & spe$spot_class != "reject"]
+  if (ncol(spe) == 0) return(NULL)
+  
+  cd <- as.data.frame(SummarizedExperiment::colData(spe)) %>%
+    filter(!is.na(cell_type), !is.na(second_type))
+  
+  if (nrow(cd) == 0) return(NULL)
+  
+  cd %>%
+    count(cell_type, second_type) %>%
+    group_by(cell_type) %>%
+    mutate(prop = n / sum(n)) %>%
+    ungroup() %>%
+    mutate(sample = sample_name)
+})
+
+#media(normalizzata)
+mean_props <- all_props %>%
+  group_by(cell_type, second_type) %>%
+  summarise(mean_prop = mean(prop), .groups = "drop") %>%
+  group_by(cell_type) %>%
+  mutate(mean_prop = mean_prop / sum(mean_prop)) %>%
+  ungroup()
+
+p <- ggplot(mean_props, aes(x = "", y = mean_prop, fill = second_type)) +
+  geom_col(width = 1) +
+  coord_polar(theta = "y") +
+  facet_wrap(~cell_type) +
+  scale_fill_manual(values = color_vector) +
+  labs(title = "Mean proportions across samples") +
+  theme_void()
+
+ggsave(
+  "mean_pie_second_type.png",
+  p,
+  width = 10,
+  height = 8,
+  dpi = 300
+)
+```
+
+#Why are so many nuclei not significant?
+```{r}
+qc_list <- lapply(nuclei_list, function(spe){
+  rejected <- spe[, spe$spot_class == "reject"]
+  annotated <- spe[, spe$spot_class != "reject"]
+  
+  data.frame(
+    total_counts = c(colSums(counts(rejected)), colSums(counts(annotated))),
+    class = c(rep("reject", ncol(rejected)),
+              rep("annotated", ncol(annotated)))
+  )
+})
+
+qc_df <- dplyr::bind_rows(qc_list)
+
+ggplot(qc_df, aes(x = class, y = total_counts)) +
+  geom_violin() +
+  geom_boxplot(width = 0.1) +
+  scale_y_log10()
+
+#####################
+qc_list <- lapply(nuclei_list, function(spe){
+  
+  df <- data.frame(
+    total_counts = colSums(counts(spe)),
+    cell_type = spe$cell_type,
+    spot_class = spe$spot_class
+  )
+  
+  # assegna etichetta finale
+  df$class <- ifelse(df$spot_class == "reject", 
+                     "reject", 
+                     as.character(df$cell_type))
+  
+  df
+})
+
+qc_df <- dplyr::bind_rows(qc_list)
+
+ggplot(qc_df, aes(x = class, y = total_counts, fill = class)) +
+  geom_violin(scale = "width") +
+  geom_boxplot(width = 0.1, outlier.size = 0.3) +
+  scale_y_log10() +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+#A separate barplot for each sample
+```{r}
+
+prop_df <- lapply(names(nuclei_list), function(name) {
+  spe <- nuclei_list[[name]]
+  spe <- spe[,spe$spot_class != "reject" & spe$to_discard == "FALSE"] #FACCIO QUA
+  tab <- table(spe$cell_type)
+  prop <- prop.table(tab)
+  data.frame(
+    sample = name,
+    cell_type = names(prop),
+    proportion = as.numeric(prop)
+  )
+}) |> bind_rows()
+
+for (s in unique(prop_df$sample)) {
+  
+  df_sub <- prop_df %>% filter(sample == s)
+  
+  p <- ggplot(df_sub, aes(x = cell_type, y = proportion, fill = cell_type)) +
+    geom_bar(stat = "identity") +
+    scale_fill_manual(values = color_vector) +
+    theme_minimal() +
+    labs(
+      title = paste("Proporzioni tipi cellulari -", s),
+      x = "Tipo Cellulare",
+      y = "Proporzione"
+    ) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "none"
+    )
+  
+  ggsave(paste0("cell_type_proportions_", s, ".png"),
+         plot = p, width = 8, height = 6, dpi = 300)
+}
+
+```
+
+#Projections on tissue with not significant nuclei too
+```{r}
+
+for (spe_name in names(nuclei_list)) {
+  spe <- nuclei_list[[spe_name]]
+  spe <- spe[,spe$to_discard == "FALSE"]
+  print(dim(spe))
+  spe$in_tissue <- rep(TRUE,dim(spe)[2])
+  stat1 <- plotCoords(spe, annotate = "cell_type", point_size = 0.9,
+                      x_coord = "y_coord", y_coord = "x_coord") + #coordinate invertite!
+    scale_color_manual(values = color_vector) +
+    theme(
+      legend.key.width = unit(0.5, "lines"),
+      legend.key.height = unit(1, "lines")
+    )
+
+  ggsave(paste0(spe_name, "_dec.png"), stat1, width = 10, height = 8, dpi = 300)
+}
+  
+```
+
+#Barplot for comparisons between 16bins, all nuclei, sig nuclei
+```{r}
+names(bin16_list_ann)
+names(nuclei_list_ann)
+sham_c26_16bin <- bin16_list_ann[names(bin16_list_ann) %in% c("sham_b1", "c26_b2", "sham_b3",
+                                                                        "c26_b4", "c26_b6", "sham_b6")]
+
+sham_c26_nuclei <- nuclei_list_ann[names(nuclei_list_ann) %in% c("blocco1_sham", "blocco2_c26",
+                                                                 "blocco3_sham", "blocco4_c26",
+                                                                 "blocco6_c26", "blocco6_sham")]
+names(sham_c26_nuclei) <- c("sham_b1", "c26_b2", "sham_b3", "c26_b4", "sham_b6", "c26_b6")
+
+plot_list <- lapply(names(sham_c26_nuclei), function(name) {
+  
+  nuclei <- sham_c26_nuclei[[name]]
+  bin16  <- sham_c26_16bin[[name]]
+  
+  # ---- 1. 16bin ----
+  tab1 <- table(colData(bin16)$new_cell_type)
+  prop1 <- prop.table(tab1)
+  
+  df1 <- data.frame(
+    source = "16bin",
+    cell_type = names(prop1),
+    proportion = as.numeric(prop1)
+  )
+  
+  # ---- 2. nuclei clean ----
+  nuclei_all <- nuclei[, nuclei$to_discard == FALSE]
+  tab2 <- table(colData(nuclei_all)$cell_type)
+  prop2 <- prop.table(tab2)
+  
+  df2 <- data.frame(
+    source = "nuclei_all",
+    cell_type = names(prop2),
+    proportion = as.numeric(prop2)
+  )
+  
+  # ---- 3. nuclei filtered ----
+  nuclei_sig <- nuclei[, nuclei$to_discard == FALSE & nuclei$spot_class != "reject"]
+  tab3 <- table(colData(nuclei_sig)$cell_type)
+  prop3 <- prop.table(tab3)
+  
+  df3 <- data.frame(
+    source = "nuclei_sig",
+    cell_type = names(prop3),
+    proportion = as.numeric(prop3)
+  )
+  
+  df_plot <- rbind(df1, df2, df3)
+  
+  # ordine barre
+  df_plot$source <- factor(df_plot$source,
+                           levels = c("16bin", "nuclei_all", "nuclei_sig"))
+  
+  # PLOT (QUESTO è quello che volevi)
+  ggplot(df_plot, aes(x = source, y = proportion, fill = cell_type)) +
+    geom_bar(stat = "identity") +
+    scale_fill_manual(values = color_vector) +
+    theme_minimal() +
+    labs(
+      title = name,
+      x = NULL,
+      y = "Proporzione",
+      fill = "Cell type"
+    )
+})
+
+# esempio: primo campione
+plot_list[[2]]
+```
+
+
+

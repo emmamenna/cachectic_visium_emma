@@ -1,4 +1,10 @@
 ---
+title: "deg nuclei"
+output: html_document
+date: "2026-03-27"
+---
+
+---
 title: "DEG_post_ann"
 output: html_document
 date: "2025-07-24"
@@ -45,68 +51,71 @@ or in 2 different cell types across conditions.
 
 #Creating a unique spatial experiment object with all samples
 ```{r}
-# subset_list <- readRDS("~/bin16_list_ann.rds")
-# 
 # #sample identifiers
-# for (nm in names(subset_list)) {
-#   spe <- subset_list[[nm]]
+# nuclei_list <- readRDS("~/nuclei_list_ann.rds")
+# 
+# for (nm in names(nuclei_list)) {
+#   spe <- nuclei_list[[nm]]
 #   colData(spe)$sample_id <- rep(nm, ncol(spe))
-#   subset_list[[nm]] <- spe
+#   nuclei_list[[nm]] <- spe
 # }
 # 
 # #ATT: DEVONO COINCIDERE I COLDATA
-# # all_cols <- Reduce(union, lapply(subset_list, function(x) colnames(colData(x))))
-# # common_cols <- Reduce(intersect, lapply(subset_list, function(x) colnames(colData(x))))
+# # all_cols <- Reduce(union, lapply(nuclei_list, function(x) colnames(colData(x))))
+# # common_cols <- Reduce(intersect, lapply(nuclei_list, function(x) colnames(colData(x))))
 # # setdiff(all_cols, common_cols)
-# subset_list$c26SMAD23_b2$to_discard <- NULL
-# subset_list$c26murf1_b2$to_discard <- NULL
-# combined_spe <- do.call(cbind, subset_list)
 # 
+# nuclei_list$blocco1_sham$in_treatment <- rep(NA,dim(nuclei_list$blocco1_sham)[2])
+# nuclei_list$blocco3_sham$in_treatment <- rep(NA,dim(nuclei_list$blocco3_sham)[2])
+# nuclei_list$blocco6_sham$in_treatment <- rep(NA,dim(nuclei_list$blocco6_sham)[2])
+# nuclei_list$blocco4_c26$in_treatment <- rep(FALSE,dim(nuclei_list$blocco4_c26)[2])
+# nuclei_list$blocco6_c26$in_treatment <- rep(FALSE,dim(nuclei_list$blocco6_c26)[2])
+# nuclei_list$blocco5_c26STAT3$in_treatment <- rep(TRUE,dim(nuclei_list$blocco5_c26STAT3)[2])
+# 
+# combined_spe <- do.call(cbind, nuclei_list)
+# table(combined_spe$to_discard)
+# adj_spe <- combined_spe[,combined_spe$to_discard == "FALSE"]
 # table(combined_spe$sample_id)
 # table(combined_spe$sample_id, combined_spe$cell_type)
 # 
 # # Create pseudo-bulk for each cell_type in each sample
 # pb <- aggregateAcrossCells(combined_spe, use.assay.type = "counts",
-#                                 id=DataFrame(label = combined_spe$new_cell_type,
+#                                 id=DataFrame(label = combined_spe$cell_type,
 #                                              sample = combined_spe$sample_id))
 # 
-# colnames(pb) <- paste(pb$new_cell_type, pb$sample_id, sep = "_")
-# saveRDS(pb, file = "~/pb_16bin.rds")
-
+# colnames(pb) <- paste(pb$cell_type, pb$sample_id, sep = "_")
+# saveRDS(pb, file = "~/pb_nuclei.rds")
 ```
 
-#DIFFERENTIAL EXPRESSION ANALYSIS for all contrasts (WITHIN CELL TYPE).
-Note: I kept TMM normalization cause upper-quantile did not work due to the high number of zeros.
-filterByExpr: roughly speaking, the strategy keeps genes that have at least min.count
-reads in a worthwhile number of samples.
 ```{r}
-#pb <- readRDS("~/pb_16bin.rds")
+pb <- readRDS("~/pb_nuclei.rds")
 
 lrt_list <- list()
 summary_list <- list()
 
 contrast_list <- list(
-  "C26_vs_SHAM"   = c("tissue_typec26 - tissue_typesham"),
-  "FOXO_vs_C26"   = c("tissue_typec26foxO - tissue_typec26"),
-  "FOXO_vs_SHAM"  = c("tissue_typec26foxO - tissue_typesham"),
-  "STAT3_vs_C26"  = c("tissue_typec26STAT3 - tissue_typec26"),
-  "STAT3_vs_SHAM" = c("tissue_typec26STAT3 - tissue_typesham"),
-  "MURF1_vs_C26"  = c("tissue_typec26murf1 - tissue_typec26"),
-  "MURF1_vs_SHAM" = c("tissue_typec26murf1 - tissue_typesham"),
-  "SMAD23_vs_C26" = c("tissue_typec26SMAD23 - tissue_typec26"),
-  "SMAD23_vs_SHAM"= c("tissue_typec26SMAD23 - tissue_typesham")
+  "C26_vs_SHAM"   = c("sampletypec26 - sampletypesham"),
+  "FOXO_vs_C26"   = c("sampletypec26foxO - sampletypec26"),
+  "FOXO_vs_SHAM"  = c("sampletypec26foxO - sampletypesham"),
+  "STAT3_vs_C26"  = c("sampletypec26STAT3 - sampletypec26"),
+  "STAT3_vs_SHAM" = c("sampletypec26STAT3 - sampletypesham"),
+  "MURF1_vs_C26"  = c("sampletypec26murf1 - sampletypec26"),
+  "MURF1_vs_SHAM" = c("sampletypec26murf1 - sampletypesham"),
+  "SMAD23_vs_C26" = c("sampletypec26SMAD23 - sampletypec26"),
+  "SMAD23_vs_SHAM"= c("sampletypec26SMAD23 - sampletypesham")
 )
+
 
 for (contrast_name in names(contrast_list)) {
   lrt_list[[contrast_name]] <- list()
   
-  for (celltype in unique(pb$new_cell_type)) {
-    ct_pb <- pb[, pb$new_cell_type == celltype]
+  for (celltype in unique(pb$cell_type)) {
+    ct_pb <- pb[, pb$cell_type == celltype]
     y <- DGEList(counts(ct_pb), samples = as.data.frame(colData(ct_pb)))
-    keep <- filterByExpr(y, group = y$samples$tissue_type)
+    keep <- filterByExpr(y, group = y$samples$sampletype)
     y <- y[keep,, keep.lib.sizes=FALSE]
     y <- calcNormFactors(y, method="TMM") #è il metodo di default cmq
-    design <- model.matrix(~ 0 + tissue_type, y$samples)
+    design <- model.matrix(~ 0 + sampletype, y$samples)
     y <- estimateDisp(y, design)
     fit <- glmFit(y, design)
     
@@ -150,9 +159,6 @@ print(summary_df)
 ```{r}
 library(openxlsx)
 
-outdir <- "results_excel"
-if (!dir.exists(outdir)) dir.create(outdir)
-
 for (contrast_name in names(lrt_list)) {
   wb <- createWorkbook()
 
@@ -179,15 +185,14 @@ for (contrast_name in names(lrt_list)) {
 
   # salva il file excel del contrasto
   clean_contrast <- gsub("[^[:alnum:]_]", "_", contrast_name)
-  saveWorkbook(wb, file.path(outdir, paste0("dge_", clean_contrast, ".xlsx")), overwrite = TRUE)
+  saveWorkbook(wb, file.path(paste0("dge_", clean_contrast, ".xlsx")), overwrite = TRUE)
 }
 
 ```
 
-
 #Comparison between trim63 myonuclei from c26 samples and myonuclei 2b from sham samples.
 ```{r}
-pb$group <- paste0(pb$new_cell_type, "_", pb$tissue_type)
+pb$group <- paste0(pb$cell_type, "_", pb$sampletype)
 pb_sub <- pb[, pb$group %in% c("Myonuclei_Trim63_c26", "Myonuclei_IIb_sham")]
 pb_sub$group <- factor(pb_sub$group, levels = c("Myonuclei_IIb_sham", "Myonuclei_Trim63_c26"))
 
@@ -226,14 +231,16 @@ gene_summary <- data.frame(
 gene_summary
   
 ```
-#TRIM C26 VS MYONUCLEI OVERALL SHAM 
+
+# TRIM C26 VS MYONUCLEI OVERALL SHAM
 ```{r}
-pb$group <- paste0(pb$new_cell_type, "_", pb$tissue_type)
+pb$group <- paste0(pb$cell_type, "_", pb$sampletype)
 mio_ov_sham <- unique(grep(paste0("^", "Myonuclei", ".*", "sham"), pb$group, value = TRUE))
 pb_sub <- pb[, pb$group %in% c("Myonuclei_Trim63_c26", mio_ov_sham)]
 pb_sub$group[pb_sub$group %in% mio_ov_sham] <- "Myonuclei_sham"
 pb_sub$group <- as.factor(pb_sub$group)
 
+library(muscat)
 pb_comb <- aggregateData(pb_sub, assay = "counts", fun = "sum", by = "sample_id")
 colData(pb_comb)$group <- pb_sub$group[match(colnames(pb_comb), pb_sub$sample_id)]
 names(assays(pb_comb)) <- "counts"
@@ -276,4 +283,6 @@ gene_summary <- data.frame(
 gene_summary
   
 ```
+
+
 

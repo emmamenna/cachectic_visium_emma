@@ -8,7 +8,8 @@ date: "2025-10-14"
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-#LINK VIGNETTA https://www.bioconductor.org/packages/devel/bioc/vignettes/Statial/inst/doc/Statial.html
+#LINK VIGNETTA 
+https://www.bioconductor.org/packages/devel/bioc/vignettes/Statial/inst/doc/Statial.html
 ```{r}
 library(Statial)
 library(spicyR)
@@ -23,65 +24,12 @@ library(tibble)
 library(treekoR)
 ```
 
-#INTANTO VISUALIZZIAMO LA RELAZIONE SPAZIALE TRA I TRIM E I 2B
-#qui prendo l'insieme totale dei mionuclei come contesto
+Analizziamo la questione Trim - Endothelials / Trim - FAPs
+come contesto: myo2b / tutti i myo
+
+#Defining the hierarchy
 ```{r}
-
-default_color <- "grey"
-
-your_color_vector <- setNames(
-  rep(default_color, 16),
-  c("Endothelial", "FAPs", "Immune_Cells", "MuSC", "Myonuclei_IIx",
-    "Myonuclei_IIx_IIa", "Myonuclei_IIx_IIb", "Myonuclei_MTJ",
-    "Myonuclei_NMJ", "Nervous_System", "Pericyte",
-    "Smooth_Muscular", "Tenocyte",
-    "Myonuclei_IIb", "Myonuclei_Trim63")
-)
-
-your_color_vector["Myonuclei_IIb"]     <- "lightgrey"
-your_color_vector["Myonuclei_Trim63"]  <- "red"
-# your_color_vector[c("Myonuclei_IIx", "Myonuclei_IIx_IIa", "Myonuclei_IIx_IIb",
-#                     "Myonuclei_MTJ", "Myonuclei_NMJ")]  <- "white"
-
-plot_list <- lapply(names(subset_list), function(nm) {
-  spe <- subset_list[[nm]]
-  
-  plotCoords(spe, annotate = "cell_type", point_size = 0.7) +
-    scale_color_manual(values = your_color_vector, na.value = default_color) +
-    ggtitle(nm) +   # <- titolo con il nome del campione
-    theme(
-      legend.key.width  = unit(0.5, "lines"),
-      legend.key.height = unit(1, "lines"),
-      plot.title = element_text(hjust = 0.5)  # per centrare il titolo
-    )
-})
-
-plot_list
-
-dir.create("plots", showWarnings = FALSE)
-for (i in seq_along(plot_list)) {
-  nm <- names(plot_list)[i]
-  ggsave(
-    filename = paste0("plots/", i, ".png"),
-    plot = plot_list[[i]],
-    width = 6, height = 5, dpi = 300
-  )
-}
-
-
-
-```
-
-#DOMANDA A CUI POSSO RISPONDERE CON KONTEXTUAL
-#Dati i pattern spaziali di tutti i mionuclei (cioè il contesto),
-#i Trim63 tendono a trovarsi più vicini ai IIb (o più lontani)
-#rispetto a quanto ci si aspetterebbe per caso se fossero distribuiti
-#casualmente all’interno del contesto.
-
-```{r}
-
-load("~/subset_list_filtered.RData") #NB: usa solo le coordinate, non importa la normalizzazione
-#prendo i mionuclei come contesto di riferimento
+nuclei_list_ann <- readRDS("~/nuclei_list_ann.rds")
 
 biologicalHierarchy <- list(
   "myonuclei" = c("Myonuclei_MTJ", "Myonuclei_Trim63", "Myonuclei_IIb",
@@ -91,88 +39,100 @@ biologicalHierarchy <- list(
   "rare"      = c("MuSC", "Nervous_System", "Immune_Cells")
 )
 
-spe <- subset_list$c26_b2
-spe$cellTypeNew <- spe$cell_type
-levels(spe$cellTypeNew) <- c(levels(spe$cellTypeNew),"Myonuclei")
-spe$cellTypeNew[spe$cell_type %in% biologicalHierarchy$myonuclei] <- "Myonuclei"
-
-curves <- kontextCurve(
-  cells = spe,
-  from = "Myonuclei_Trim63",
-  to = "Myonuclei_IIb",
-  parent = biologicalHierarchy$myonuclei,
-  rs = seq(50,500,100),
-  cellType = "cell_type",
-  spatialCoords = c("pxl_col_in_fullres", "pxl_row_in_fullres"),
-  imageID = "sample_id",
-  #inhom = TRUE
-)
-#il raggio è nella stessa unità delle coordinate perché è una soglia
-#posta sulla distanza euclidea degli spot (che hanno le coordinate in pixel)
-#quindi è in pixel 
-
-curves 
-kontextPlot(curves)
-#ATTENZIONE: I VALORI RIPORTATI SONO sqrt(L(r)/pi) - r!
-#QUINDI CONTA LO ZERO COME REFERENCE
-#"no spatial association = centered in 0 with small variance" dall'articolo
-#quindi in questo caso abbiamo un'attrazione da un certo raggio in poi
-
-#per un altro campione --------------------------------------------------------------------
-spe <- subset_list$c26_b4
-spe$cellTypeNew <- spe$cell_type
-levels(spe$cellTypeNew) <- c(levels(spe$cellTypeNew),"Myonuclei")
-spe$cellTypeNew[spe$cell_type %in% biologicalHierarchy$myonuclei] <- "Myonuclei"
-
-curves <- kontextCurve(
-  cells = spe,
-  from = "Myonuclei_Trim63",
-  to = "Myonuclei_IIb",
-  parent = biologicalHierarchy$myonuclei,
-  rs = seq(50,5000,1000),
-  cellType = "cell_type",
-  spatialCoords = c("pxl_col_in_fullres", "pxl_row_in_fullres"),
-  imageID = "sample_id",
-  #inhom = TRUE
-)
-
-curves 
-kontextPlot(curves)
-#il raggio è 8 bin = 25 pixel circa quindi ci può stare
-
-
 ```
 
 
-#TUTTI I CAMPIONI (TRANNE SHAM)
 ```{r}
-load("~/subset_list_filtered.RData")
-subset_list <- subset_list[!names(subset_list) %in% c("sham_b1","sham_b6","sham_b3")]
-plot_list <- list()  # crea lista vuota per salvare i plot
-
-#NON VA PER QUASI NESSUN CAMPIONE
-#se no mi baso direttamente sulle curve senza contesto e pace
-for (i in seq_along(subset_list)) {
-  spe_i <- subset_list[[i]] 
-  
-  curves <- kontextCurve(
-    cells = spe_i,
-    from = "Myonuclei_Trim63",
-    to = "Myonuclei_IIb",
-    parent = c("Myonuclei_MTJ", "Myonuclei_Trim63","Myonuclei_IIb","Myonuclei_IIx_IIb","Myonuclei_IIx",
-               "Myonuclei_NMJ","Myonuclei_IIx_IIa"),
-    rs = seq(50,5000,1000),,
-    cellType = "cell_type",
-    spatialCoords = c("pxl_col_in_fullres", "pxl_row_in_fullres"),
-    imageID = "sample_id",
-    inhom = TRUE
-  )
-  
-  plot_list[[i]] <- kontextPlot(curves) +
-    ggtitle(names(subset_list)[i])
-}
+# spe <- nuclei_list_ann$blocco2_c26
+# spe <- nuclei_list_ann$blocco4_c26
+# spe <- nuclei_list_ann$blocco6_c26
+# 
+# spe$celltype_kontextual <- spe$cell_type
+# spe$celltype_kontextual[spe$cell_type %in% biologicalHierarchy$myonuclei] <- "Myonuclei"
+# spe$celltype_kontextual[spe$cell_type == "Myonuclei_Trim63"] <- "Myonuclei_Trim63"
+# spe$celltype_kontextual <- as.factor(spe$celltype_kontextual)
+# table(spe$celltype_kontextual)
+# 
+# #il raggio è nella stessa unità delle coordinate (quindi in um)
+# #perché è una soglia posta sulla distanza euclidea degli spot (che hanno le coordinate in pixel)
+# curves <- kontextCurve(
+#   cells = spe,
+#   from = "Immune_Cells",
+#   to = "Myonuclei_Trim63",
+#   parent = c("Myonuclei_Trim63", "Myonuclei"),
+#   rs = seq(5, 50, 5),
+#   cellType = "celltype_kontextual",
+#   spatialCoords = c("pxl_col_in_fullres", "pxl_row_in_fullres"),
+#   imageID = "sample_id",
+#   #inhom = TRUE
+# )
+# kontextPlot(curves)
+# 
+# curves <- kontextCurve(
+#   cells = spe,
+#   from = "Endothelial",
+#   to = "Myonuclei_Trim63",
+#   parent = c("Myonuclei_Trim63", "Myonuclei"),
+#   rs = seq(10, 100, 10),
+#   cellType = "celltype_kontextual",
+#   spatialCoords = c("pxl_col_in_fullres", "pxl_row_in_fullres"),
+#   imageID = "sample_id",
+#   #inhom = TRUE
+# )
+# kontextPlot(curves)
+# 
+# curves <- kontextCurve(
+#   cells = spe,
+#   from = "FAPs",
+#   to = "Myonuclei_Trim63",
+#   parent = c("Myonuclei_Trim63", "Myonuclei"),
+#   rs = seq(10, 100, 10),
+#   cellType = "celltype_kontextual",
+#   spatialCoords = c("pxl_col_in_fullres", "pxl_row_in_fullres"),
+#   imageID = "sample_id",
+#   #inhom = TRUE
+# )
+# kontextPlot(curves)
 
 ```
 
+```{r}
+# Define samples and cell types
+samples <- c("blocco2_c26", "blocco4_c26", "blocco6_c26")
 
+from_types <- c("Endothelial", "FAPs", "Pericyte", "Smooth_Muscular",
+                "Tenocyte", "MuSC", "Nervous_System", "Immune_Cells")
+dir.create("plots_kontext", showWarnings = FALSE)
+
+# Loop over samples
+for (s in samples) {
+  
+  spe <- nuclei_list_ann[[s]]
+  
+  # Create contextual cell type once
+  spe$celltype_kontextual <- spe$cell_type
+  spe$celltype_kontextual[spe$cell_type %in% biologicalHierarchy$myonuclei] <- "Myonuclei"
+  spe$celltype_kontextual[spe$cell_type == "Myonuclei_Trim63"] <- "Myonuclei_Trim63"
+  spe$celltype_kontextual <- as.factor(spe$celltype_kontextual)
+  
+  # Loop over "from" cell types
+  for (ct in from_types) {
+    
+    curves <- kontextCurve(
+      cells = spe,
+      from = ct,
+      to = "Myonuclei_Trim63",
+      parent = c("Myonuclei_Trim63", "Myonuclei"),
+      rs = seq(5, 50, 5),
+      cellType = "celltype_kontextual",
+      spatialCoords = c("pxl_col_in_fullres", "pxl_row_in_fullres"),
+      imageID = "sample_id"
+    )
+  
+    p <- kontextPlot(curves)
+    filename <- paste0("kontext_", s, "_from_", ct, ".png")
+    ggsave(filename, plot = p, width = 8, height = 6)
+  }
+}
+```
 

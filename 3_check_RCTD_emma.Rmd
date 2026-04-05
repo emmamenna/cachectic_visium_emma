@@ -274,7 +274,6 @@ cd_df_clean <- cd_df |>
 
 ```
 
-
 ```{r}
 cell_proportions <- cd_df_clean |> 
   count(cell_type) |> 
@@ -444,11 +443,16 @@ walk(zeroscore_list, \(el) {print(el$percentage_zero[1])})
 # Analisi per tutta la lista dei campioni
 ```{r}
 #spe_list <- map(spe_list, \(spe) {spe <- fix_spe_celltypes(spe, score_cols)})
-subset_list <- map(subset_list, \(spe) {spe <- fix_spe_celltypes(spe, score_cols)})
-map(subset_list, \(x){table(x$new_cell_type)})
+new_list <- map(subset_list, \(spe) {spe <- fix_spe_celltypes(spe, score_cols)})
+map(new_list, \(x){table(x$new_cell_type)})
+new_list$c26SMAD23_b2 <- subset_list$c26SMAD23_b2
+new_list$c26murf1_b2 <- subset_list_updated$c26murf1_b2
+new_list$c26_b2 <- subset_list_updated$c26_b2
 
-#saveRDS(subset_list, file = "subset_list_updated.rds")
-
+blocco2 <- list()
+blocco2$c26SMAD23_b2 <- new_list$c26SMAD23_b2
+blocco2$c26murf1_b2 <- new_list$c26murf1_b2
+saveRDS(blocco2, file = "~/blocco2_list.rds")
 ```
 
 #proportions
@@ -511,36 +515,9 @@ ggplot(prop_df_condition, aes(x = tissue_type, y = proportion, fill = cell_type)
 ggsave("~/prop_updated.png", width = 10, height = 6, dpi = 300)
 ```
 
-#Boxplots 
-```{r boxplot-chunk, eval = !params$partial_data}
-# This chunk will not run if partial_data == FALSE
-prop_per_sample <- imap_dfr(spe_list, function(spe, name) {
-  cd <- as.data.table(SummarizedExperiment::colData(spe))
-  cd |>
-    filter(!is.na(.data[["new_cell_type"]])) |>
-    dplyr::count(.data[["new_cell_type"]], name = "count") |>
-    mutate(proportion  = count / sum(count),
-           sample      = name,
-           tissue_type = paste(unique(as.character(cd$tissue_type)), collapse = ", ")) |> 
-    dplyr::rename(cell_type = all_of("new_cell_type"))
-})
-
-ggplot(prop_per_sample, aes(x = tissue_type, y = proportion, fill = tissue_type)) +
-  geom_boxplot(outlier.shape = 21) +
-  facet_wrap(~ cell_type, scales = "free_y") +
-  scale_fill_manual(values = c("sham" = "#1b9e77", "c26" = "#d95f02")) +
-  theme_minimal(base_size = 12) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
-  labs(title = "Distribuzione proporzioni cell_type per tissue_type",
-       x = "Tissue type",
-       y = "Proporzione")
-
-ggsave("~/repositories/cachetic_visiumHD/figures/output_R/emma_RCTD_by_me/boxplot_celltype_prop_by_cond.png", width = 10, height = 6, dpi = 300)
-```
-
 #Proiezioni sul tessuto
 ```{r}
-subset_list_updated <- readRDS("~/subset_list_updated.rds")
+#subset_list_updated <- readRDS("~/subset_list_updated.rds")
 # subset_list_updated <- lapply(subset_list_updated, function(spe) {
 #    keep <- !is.na(spe$new_cell_type) & colSums(counts(spe)) > 0
 #    spe[,keep]
@@ -548,8 +525,8 @@ subset_list_updated <- readRDS("~/subset_list_updated.rds")
 
 #saveRDS(subset_list_updated, file = "subset_list_updated.rds")
 
-for (spe_name in names(subset_list_updated)) {
-  spe <- subset_list_updated[[spe_name]]
+for (spe_name in names(blocco2_list)) {
+  spe <- blocco2_list[[spe_name]]
   # ws <- colData(spe)[,seq(8,22,1)]
   # p <- lapply(names(ws), function(nm) {
   # plotCoords(spe, annotate = nm, point_size = 0.1) +
@@ -569,27 +546,9 @@ for (spe_name in names(subset_list_updated)) {
   # scale_color_gradientn(colors = rev(hcl.colors(9, "Rocket")), limits = c(0, 1))
   # 
   # ggsave(paste0(spe_name, "_types.png"), final_plot, width = 10, height = 8, dpi = 300)
-  
-your_color_vector <- c(
-    "Endothelial" = "#0072B2",       # blu vivo
-    "FAPs" = "#009E73",              # verde vivo
-    "Immune_Cells" = "#D55E00",      # arancione-rosso
-    "MuSC" = "#E69F00",              # arancione
-    "Myonuclei_IIb" = "#CC79A7",     # magenta
-    "Myonuclei_IIx" = "#56B4E9",     # azzurro chiaro
-    "Myonuclei_IIx_IIa" = "#F0E442", # giallo
-    "Myonuclei_IIx_IIb" = "#9B59B6", # viola chiaro
-    "Myonuclei_MTJ" = "#0099B4",     # turchese
-    "Myonuclei_NMJ" = "#DDAA33",     # senape
-    "Myonuclei_Trim63" = "#CC3311",  # rosso scuro
-    "Nervous_System" = "#44AA99",    # verde acqua
-    "Pericyte" = "#AA4499",          # viola/rosa
-    "Smooth_Muscular" = "#332288",   # blu-viola scuro
-    "Tenocyte" = "#A3E635"           # verde lime
-)
 
-stat1 <- plotCoords(spe, annotate = "new_cell_type", point_size = 0.5) +
-    scale_color_manual(values = your_color_vector) +
+stat1 <- plotCoords(spe, annotate = "new_cell_type", point_size = 0.9) +
+    scale_color_manual(values = color_vector) +
     theme(
       legend.key.width = unit(0.5, "lines"),
       legend.key.height = unit(1, "lines")
@@ -693,6 +652,36 @@ props_wide <- props %>%
   pivot_wider(names_from = cell_type, values_from = prop, values_fill = 0)
 
 write_xlsx(props_wide, path = "rctd16_prop_cond.xlsx")
+
+```
+
+#boxplot of cell type proportions stratified by condition
+```{r}
+prop_per_sample <- purrr::imap_dfr(subset_list_updated, function(spe, name) {
+  cd <- as.data.frame(SummarizedExperiment::colData(spe))
+  cd |>
+    dplyr::filter(!is.na(cell_type)) |>
+    dplyr::count(cell_type, name = "count") |>
+    dplyr::mutate(
+      proportion  = count / sum(count),
+      sample      = name,
+      tissue_type = paste(unique(as.character(cd$tissue_type)), collapse = ", ")
+    )
+})
+prop_per_sample$tissue_type <- factor(
+  prop_per_sample$tissue_type,
+  levels = c("sham", "c26", "c26STAT3", "c26foxO", "c26murf1", "c26SMAD23")
+)
+ggplot(prop_per_sample, aes(x = tissue_type, y = proportion, fill = tissue_type)) +
+  geom_boxplot(outlier.shape = 21) +
+  facet_wrap(~ cell_type, scales = "free_y") +
+  scale_fill_manual(values = c("sham" = "#1B9E77", "c26" = "#D95F02")) +
+  theme_minimal(base_size = 12) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "Distribuzione proporzioni cell_type per tissue_type",
+       x = "Tissue type",
+       y = "Proporzione")
+ggsave("boxplot_cell_types.png", width = 10, height = 6, dpi = 300)
 
 ```
 

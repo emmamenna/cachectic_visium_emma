@@ -1,0 +1,134 @@
+---
+title: "DEG GFP nuclei"
+output: html_document
+date: "2026-04-01"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(arrow)
+library(Banksy)
+library(BiocParallel)
+library(DropletUtils)
+library(dplyr)
+library(edgeR)
+library(ggplot2)
+library(graphics)
+library(igraph)
+library(jsonlite)
+library(Matrix)
+library(matrixStats)
+library(OSTA.data)
+library(patchwork)
+library(pheatmap)
+library(S4Vectors)
+library(scDblFinder)
+library(scater)
+library(scran)
+library(scuttle)
+library(SingleCellExperiment)
+library(SpatialExperiment)
+library(SummarizedExperiment)
+library(tidyr)
+library(VisiumIO)
+library(spacexr)
+library(SpotSweeper)
+library(ggspavis)
+library(openxlsx)
+```
+
+```{r}
+#USARE 16 BIN
+#aggregare per gfp invece che per celltype
+bin16_list_ann <- readRDS("~/bin16_list_ann.rds")
+murf_list <- bin16_list_ann[names(bin16_list_ann) %in%
+                                   c("c26murf1_b2", "c26murf1_b3", "c26murf1_b5", "c26murf1_b9")]
+
+#sample identifiers
+for (nm in names(murf_list)) {
+  spe <- murf_list[[nm]]
+  colData(spe)$sample_id <- rep(nm, ncol(spe))
+  murf_list[[nm]] <- spe
+}
+
+murf_list$c26murf1_b2$to_discard <- NULL
+murf_list$c26murf1_b2$in_treatment <- ifelse(murf_list$c26murf1_b2$in_treatment == TRUE, 1, 0)
+combined_spe <- do.call(cbind, murf_list)
+table(combined_spe$sample_id, combined_spe$in_treatment)
+combined_spe$in_treatment <- ifelse(combined_spe$in_treatment == 1, "gfp+", "untreated")
+
+# Create pseudo-bulk for each cell_type in each sample
+pb <- aggregateAcrossCells(combined_spe, use.assay.type = "counts",
+                                id=DataFrame(label = combined_spe$in_treatment,
+                                             sample = combined_spe$sample_id))
+
+colnames(pb) <- paste(pb$in_treatment, pb$sample_id, sep = "_")
+
+```
+
+```{r}
+y <- DGEList(counts(pb), samples = colData(pb))
+keep <- filterByExpr(y, group = y$samples$in_treatment)
+y <- y[keep,, keep.lib.sizes=FALSE]
+y <- calcNormFactors(y)
+y$samples$in_treatment <- as.factor(y$samples$in_treatment)
+y$samples$in_treatment <- relevel(y$samples$in_treatment, ref = "untreated")
+design <- model.matrix(~ in_treatment, data = y$samples)
+y <- estimateDisp(y, design)
+fit <- glmFit(y, design)
+lrt <- glmLRT(fit, coef = "in_treatmentgfp+")
+
+res <- topTags(lrt, n = Inf)$table
+res$significant <- res$FDR < 0.05
+sig <- res[res$significant, ]
+sig_up <- sig[sig$logFC >= 0, ]
+sig_down <- sig[sig$logFC < 0, ]
+
+gene_summary <- data.frame(
+  Geni_considerati = nrow(res),
+  Geni_significativi = nrow(sig),
+  Upregolati = nrow(sig_up),
+  Downregolati = nrow(sig_down)
+)
+gene_summary
+```
+
+```{r}
+
+res$SYMBOL <- rownames(res)
+res$significant <- res$FDR < 0.05
+
+wb <- createWorkbook()
+addWorksheet(wb, "Tutti_geni")
+writeData(wb, "Tutti_geni", res, rowNames = TRUE)
+addWorksheet(wb, "Significativi")
+writeData(wb, "Significativi", sig, rowNames = TRUE)
+addWorksheet(wb, "Upregolati")
+writeData(wb, "Upregolati", sig_up, rowNames = TRUE)
+addWorksheet(wb, "Downregolati")
+writeData(wb, "Downregolati", sig_down, rowNames = TRUE)
+saveWorkbook(wb,"murf_gfp_DEGs.xlsx", overwrite = TRUE)
+
+```
+
+```{r}
+geni_da_cercare <- c("FoxO6", "Gm41696", "Coq6", "Nkx1-1", "Gm32854", "Gm31536", "Gm46659",
+                     "Lrrk2", "Abca6", "Diras1")
+
+geni_da_cercare %in% rownames(sig_up)
+geni_da_cercare %in% rownames(sig_down)
+#Coq6 è downregolato nei trattati
+
+geni2 <- c("Gm39576", "Gm39920", "Sh2d4b", "Gm36830", "Exoc6b", "Gm35515", "Gm32432",
+           "Camta2", "Fmo4", "Gcnt3")
+geni2 %in% rownames(sig_up)
+geni2 %in% rownames(sig_down)
+
+```
+
+
+
+

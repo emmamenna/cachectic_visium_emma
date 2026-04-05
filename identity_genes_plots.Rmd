@@ -48,8 +48,7 @@ library(zip)
 
 #DOTPLOT su LISTA RIDOTTA 
 ```{r}
-#da grafico 1k articolo Camilla
-pb_wb7 <- readRDS("~/pb_wb7.rds")
+pb_wb7 <- readRDS("~/pb_.rds")
 
 # CORREGGO EFFETTO DI BATCH ------------------------------------------------------------------------
 library(sva)

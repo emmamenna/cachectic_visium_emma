@@ -1,4 +1,10 @@
 ---
+title: "MuSC_nuclei"
+output: html_document
+date: "2026-03-27"
+---
+
+---
 title: "MuSC"
 output: html_document
 date: "2025-11-11"
@@ -43,37 +49,53 @@ library(clusterProfiler)
 library(org.Mm.eg.db)
 ```
 
+#MuSC annotation correction
+MuSC are defined as cells where Pax7 gene is expressed.
+```{r}
+# nuclei_list <- readRDS("~/nuclei_list_ann.rds")
+# 
+# nuclei_list <- lapply(nuclei_list, function(spe) {
+#   print(table(spe$cell_type == "MuSC"))
+#   pax7_pos <- counts(spe)["Pax7", ] > 0
+#   spe$cell_type[pax7_pos] <- "MuSC"
+#   print(table(spe$cell_type == "MuSC"))
+#   return(spe)
+# })
+
+#qua la signature è già giusta! cambiano al massimo di 1
+```
+
 #Faccio una cosa sensata: uso i DEGs e semmai rilasso le condizioni
 #parto da c26 vs sham dei nuclei che è il confronto con + DEG
 ```{r}
-pb <- readRDS("~/pb_16bin.rds")
+pb <- readRDS("~/pb_nuclei.rds")
 
 lrt_list <- list()
 summary_list <- list()
 
 celltype <- "MuSC"
-ct_pb <- pb[, pb$new_cell_type == celltype]
+ct_pb <- pb[, pb$cell_type == celltype]
 
 y <- DGEList(counts(ct_pb), samples = as.data.frame(colData(ct_pb)))
 #RILASSO UN PO' LE CONDIZIONI DI FILTRAGGIO DEI GENI
 set.seed(72625)
 keep <- filterByExpr(
   y,
-  group = y$samples$tissue_type,
-  min.count = 1,
-  min.total.count = 1
+  group = y$samples$sampletype,
+  min.count = 5,
+  min.total.count = 10
 )
 y <- y[keep,, keep.lib.sizes=FALSE]
 y <- calcNormFactors(y, method="TMM")
 
-design <- model.matrix(~ 0 + tissue_type, y$samples)
+design <- model.matrix(~ 0 + sampletype, y$samples)
 y <- estimateDisp(y, design)
 fit <- glmFit(y, design)
 
 contrast_list <- list(
-  C26_vs_SHAM   = "tissue_typec26 - tissue_typesham",
-  MURF1_vs_SHAM = "tissue_typec26murf1 - tissue_typesham",
-  MURF1_vs_C26 = "tissue_typec26murf1 - tissue_typec26"
+  C26_vs_SHAM   = "sampletypec26 - sampletypesham",
+  MURF1_vs_SHAM = "sampletypec26murf1 - sampletypesham",
+  MURF1_vs_C26 = "sampletypec26murf1 - sampletypec26"
 )
 
 for (contrast_name in names(contrast_list)) {
@@ -114,45 +136,6 @@ for (contrast_name in names(contrast_list)) {
 summary_df <- do.call(rbind, summary_list)
 print(summary_df)
 
-```
-
-#salvo i DEG
-```{r}
-top <- lrt_list$MURF1_vs_SHAM$full
-wb <- createWorkbook()
-addWorksheet(wb, "Tutti_geni")
-writeData(wb, "Tutti_geni", top, rowNames = TRUE)
-addWorksheet(wb, "Significativi")
-writeData(wb, "Significativi", sig, rowNames = TRUE)
-addWorksheet(wb, "Upregolati")
-writeData(wb, "Upregolati", sig_up, rowNames = TRUE)
-addWorksheet(wb, "Downregolati")
-writeData(wb, "Downregolati", sig_down, rowNames = TRUE)
-saveWorkbook(wb,"musc_murf_sham.xlsx", overwrite = TRUE)
-
-top <- lrt_list$C26_vs_SHAM$full
-wb <- createWorkbook()
-addWorksheet(wb, "Tutti_geni")
-writeData(wb, "Tutti_geni", top, rowNames = TRUE)
-addWorksheet(wb, "Significativi")
-writeData(wb, "Significativi", sig, rowNames = TRUE)
-addWorksheet(wb, "Upregolati")
-writeData(wb, "Upregolati", sig_up, rowNames = TRUE)
-addWorksheet(wb, "Downregolati")
-writeData(wb, "Downregolati", sig_down, rowNames = TRUE)
-saveWorkbook(wb,"musc_c26_sham.xlsx", overwrite = TRUE)
-
-top <- lrt_list$MURF1_vs_C26$full
-wb <- createWorkbook()
-addWorksheet(wb, "Tutti_geni")
-writeData(wb, "Tutti_geni", top, rowNames = TRUE)
-addWorksheet(wb, "Significativi")
-writeData(wb, "Significativi", sig, rowNames = TRUE)
-addWorksheet(wb, "Upregolati")
-writeData(wb, "Upregolati", sig_up, rowNames = TRUE)
-addWorksheet(wb, "Downregolati")
-writeData(wb, "Downregolati", sig_down, rowNames = TRUE)
-saveWorkbook(wb,"musc_murf_c26.xlsx", overwrite = TRUE)
 ```
 
 #GSEA C26 VS SHAM
@@ -201,7 +184,7 @@ res_df <- as.data.frame(gsea_sig@result)
 wb <- createWorkbook()
 addWorksheet(wb, "GSEA_Results")
 writeData(wb, sheet = "GSEA_Results", x = res_df, rowNames = TRUE)
-saveWorkbook(wb, file = "gsea_MuSC_c26_sham.xlsx", overwrite = TRUE)
+saveWorkbook(wb, file = "gsea_MuSC_c26_sham_nuclei.xlsx", overwrite = TRUE)
 
 ```
 
@@ -251,7 +234,7 @@ res_df <- as.data.frame(gsea_sig@result)
 wb <- createWorkbook()
 addWorksheet(wb, "GSEA_Results")
 writeData(wb, sheet = "GSEA_Results", x = res_df, rowNames = TRUE)
-saveWorkbook(wb, file = "gsea_MuSC_murf1_sham.xlsx", overwrite = TRUE)
+saveWorkbook(wb, file = "gsea_MuSC_murf1_sham_nuclei.xlsx", overwrite = TRUE)
 
 ```
 
@@ -301,56 +284,45 @@ res_df <- as.data.frame(gsea_sig@result)
 wb <- createWorkbook()
 addWorksheet(wb, "GSEA_Results")
 writeData(wb, sheet = "GSEA_Results", x = res_df, rowNames = TRUE)
-saveWorkbook(wb, file = "gsea_MuSC_murf1_c26.xlsx", overwrite = TRUE)
+saveWorkbook(wb, file = "gsea_MuSC_murf1_c26_nuclei.xlsx", overwrite = TRUE)
 
 ```
 
-
-#Creo un oggetto spatial unico e indago se i MuSC aumentano tra c26 e sham
+#se vuole vedere i geni
 ```{r}
-for (nm in names(subset_list)) {
-  spe <- subset_list[[nm]]
-  colData(spe)$sample_id <- rep(nm, ncol(spe))  
-  subset_list[[nm]] <- spe
-}
+top <- lrt_list$MURF1_vs_SHAM$full
+wb <- createWorkbook()
+addWorksheet(wb, "Tutti_geni")
+writeData(wb, "Tutti_geni", top, rowNames = TRUE)
+addWorksheet(wb, "Significativi")
+writeData(wb, "Significativi", sig, rowNames = TRUE)
+addWorksheet(wb, "Upregolati")
+writeData(wb, "Upregolati", sig_up, rowNames = TRUE)
+addWorksheet(wb, "Downregolati")
+writeData(wb, "Downregolati", sig_down, rowNames = TRUE)
+saveWorkbook(wb,"musc_murf_sham.xlsx", overwrite = TRUE)
 
-spe_list <- subset_list[names(subset_list)]
-exclude_names <- c("sham_b7", "c26STAT3_b7", "c26_b7")
-combined_spe_wob7 <- do.call(
-  cbind, 
-  spe_list[!(names(spe_list) %in% exclude_names)]
-)
-table(colData(combined_spe_wob7)$sample_id)
+top <- lrt_list$C26_vs_SHAM$full
+wb <- createWorkbook()
+addWorksheet(wb, "Tutti_geni")
+writeData(wb, "Tutti_geni", top, rowNames = TRUE)
+addWorksheet(wb, "Significativi")
+writeData(wb, "Significativi", sig, rowNames = TRUE)
+addWorksheet(wb, "Upregolati")
+writeData(wb, "Upregolati", sig_up, rowNames = TRUE)
+addWorksheet(wb, "Downregolati")
+writeData(wb, "Downregolati", sig_down, rowNames = TRUE)
+saveWorkbook(wb,"musc_c26_sham.xlsx", overwrite = TRUE)
 
-rm(subset_list)
-#REMOVING NAs
-keep <- !is.na(combined_spe_wob7$cell_type)
-combined_spe_wob7[,keep]
-save(combined_spe_wob7, file="combined_spe_wob7.RData")
-
-table(combined_spe_wob7$cell_type=="MuSC",combined_spe_wob7$tissue_type)
-prop.table(table(combined_spe_wob7$cell_type=="MuSC",combined_spe_wob7$tissue_type))
-#sono di più negli sham che nei c26 e molte di più nei trattamenti (torna!)
-table(combined_spe_wob7$cell_type=="MuSC",combined_spe_wob7$sample_id)
-
-#Modello binomiale per testare l'effetto della condizione
-y <- ifelse(combined_spe_wob7$cell_type=="MuSC",1,0)
-
-combined_spe_wob7$tissue_type <- relevel(combined_spe_wob7$tissue_type, ref = "sham")
-
-mod_mixed <- glmer(
-  I(cell_type == "MuSC") ~ tissue_type + (1 | sample_id),
-  data = as.data.frame(colData(combined_spe_wob7)),
-  family = binomial
-)
-
-summary(mod_mixed) 
-#si confermano le previsioni: con c26 diminuiscono rispetto a sham e con i trattamenti aumentano
-
-#visualizzazione?
-y <- prop.table(table(combined_spe_wob7$cell_type=="MuSC",combined_spe_wob7$sample_id))[2,]
-x <- c(rep("c26",3),rep("c26fox0",4),rep("c26murf1",4),rep("c26SMAD23",4),rep("c26STAT3",3),rep("sham",3))
-x <- as.factor(x)
-png("boxplot.png", width = 800, height = 600, res = 120)
-boxplot(y ~ x)
+top <- lrt_list$MURF1_vs_C26$full
+wb <- createWorkbook()
+addWorksheet(wb, "Tutti_geni")
+writeData(wb, "Tutti_geni", top, rowNames = TRUE)
+addWorksheet(wb, "Significativi")
+writeData(wb, "Significativi", sig, rowNames = TRUE)
+addWorksheet(wb, "Upregolati")
+writeData(wb, "Upregolati", sig_up, rowNames = TRUE)
+addWorksheet(wb, "Downregolati")
+writeData(wb, "Downregolati", sig_down, rowNames = TRUE)
+saveWorkbook(wb,"musc_murf_c26.xlsx", overwrite = TRUE)
 ```

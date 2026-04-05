@@ -1,5 +1,6 @@
 ---
-title: "spot_dec"
+title: "16um bins annotation with Rctd"
+author: "Emma Menna"
 output: html_document
 date: "2025-07-21"
 ---
@@ -8,6 +9,7 @@ date: "2025-07-21"
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+#Libraries
 ```{r, include=FALSE}
 library(arrow)
 library(Banksy)
@@ -40,14 +42,43 @@ library(writexl)
 library(lme4)
 ```
 
+#Objects
+```{r}
+sce_ref <- readRDS("~/multiome_sce.rds") #reference dataset
+subset_list <- readRDS("~/bin16_list_raw.rds")
+
+color_vector <- c(
+    "Endothelial" = "#0072B2",       # blu vivo
+    "FAPs" = "#009E73",              # verde vivo
+    "Immune_Cells" = "#D55E00",      # arancione-rosso
+    "MuSC" = "#E69F00",              # arancione
+    "Myonuclei_IIb" = "#CC79A7",     # magenta
+    "Myonuclei_IIx" = "#56B4E9",     # azzurro chiaro
+    "Myonuclei_IIx_IIa" = "#F0E442", # giallo
+    "Myonuclei_IIx_IIb" = "#9B59B6", # viola chiaro
+    "Myonuclei_MTJ" = "#0099B4",     # turchese
+    "Myonuclei_NMJ" = "#DDAA33",     # senape
+    "Myonuclei_Trim63" = "#CC3311",  # rosso scuro
+    "Nervous_System" = "#44AA99",    # verde acqua
+    "Pericyte" = "#AA4499",          # viola/rosa
+    "Smooth_Muscular" = "#332288",   # blu-viola scuro
+    "Tenocyte" = "#A3E635"           # verde lime
+)
+
+score_cols <- c("Endothelial", "FAPs", "Immune_Cells", "MuSC", 
+                "Myonuclei_IIb", "Myonuclei_IIx", "Myonuclei_IIx_IIa", 
+                "Myonuclei_IIx_IIb", "Myonuclei_MTJ", "Myonuclei_NMJ", 
+                "Myonuclei_Trim63", "Nervous_System", "Pericyte", 
+                "Smooth_Muscular", "Tenocyte")
+
+```
+
 #Deconvolution function
 For each spot the probability for each cell type as well as the label of the principal cell type are saved.
 Three assays (one in full mode):
-
 weights: Cell type proportions restricted according to the specified mode
 weights_unconfident: Cell type proportions restricted according to the specified mode, including unconfident predictions (not available in full mode)
 weights_full: Unrestricted cell type proportions (not available in full mode, use weights instead)
-
 Assays have cell types as rows and pixels as columns, with values representing the proportion (0 to 1) of each cell type in each pixel. Assay columns sum to 1 (except for rejected pixels, which sum to 0).
 ```{r}
 run_my_rctd <- function(spe, sce_ref, out_prefix) {
@@ -88,143 +119,70 @@ run_my_rctd <- function(spe, sce_ref, out_prefix) {
 }
 ```
 
-#diagnostica su Rctd
+#Function to fix cell types
+Rctd in "multi" mode sometimes assigns probabilities all equal to 0
+then the function above wrongly assignes the first cell type in the list.
 ```{r}
-prova <- results$cell_type_list
-  results$conf_list
-  results$min_score
-  colData(results)$num_cell_types <- sapply(
-  colData(results)$cell_type_list,
-  length
-)
+fix_spe_celltypes <- function(spe, score_columns, cell_type_col = "cell_type") {
 
-weights <- assay(results, "weights")
+  cd <- as.data.frame(colData(spe))
+  score_mat <- as.matrix(cd[, score_columns])
+  max_score <- apply(score_mat, 1, max)
+  best_type <- score_columns[max.col(score_mat, ties.method = "first")]
+  orig_col_idx <- match(as.character(cd[[cell_type_col]]), score_columns)
+  orig_score <- score_mat[cbind(1:nrow(score_mat), orig_col_idx)]
+  
+  new_cell_type <- as.character(cd[[cell_type_col]])
+  
+  # If original score is 0, but another type is > 0 -> Reassign to best_type
+  reassign_mask <- which(orig_score == 0 & max_score > 0)
+  new_cell_type[reassign_mask] <- best_type[reassign_mask]
+  
+  # If EVERY score is 0 -> Assign NA
+  na_mask <- which(max_score == 0)
+  new_cell_type[na_mask] <- NA
 
-# 2. For each possible cell type, extract weights for each cell if that type is listed in the cell_type_list
-# We'll iterate through all possible cell types (appear in assay rownames)
-for (ct in rownames(weights)) {
-  # For each cell, if that cell type is present in its cell_type_list, record the corresponding weight, otherwise NA
-  colData(results)[[paste0("weight_", ct)]] <-
-    sapply(seq_along(colData(results)$cell_type_list), function(i) {
-      if (ct %in% colData(results)$cell_type_list[[i]]) {
-        weights[ct, i]
-      } else {
-        NA
-      }
-    })
+  spe$new_cell_type <- new_cell_type
+  return(spe)
 }
-
-cell_type_weights <- lapply(
-  seq_along(colData(results)$cell_type_list),
-  function(i) {
-    celltypes <- colData(results)$cell_type_list[[i]]
-    setNames(weights[celltypes, i], celltypes)
-  }
-)
-colData(results)$cell_type_weights <- cell_type_weights
-
-# Compute the sum for each cell
-weight_sums <- sapply(colData(results)$cell_type_weights, sum)
-
-# Option 1: Logical vector--Does each cell's sum == 1?
-all_equal_one <- abs(weight_sums - 1) < 1e-6  # Use tolerance for floating-point errors
-table(weight_sums == 0) #lessgo
-
-zero_weight_cells <- which(weight_sums == 0)  # Indices of such cells
-conf_list_for_zero_weights <- colData(results)$conf_list[zero_weight_cells]
-conf_list_for_zero_weights
-table(unlist(conf_list_for_zero_weights))
-#ottimo, tutti cell types FALSE -> PESI ZERO
-
-# conf_list = colData(results)$conf_list
-matches <- sapply(
-  colData(results)$conf_list,
-  function(x) {
-    length(x) > 1 && is.logical(x) && !is.na(x[1]) && x[1] == FALSE && any(x[-1] == TRUE, na.rm = TRUE)
-  }
-)
-
-# The indices (or spot/cell names) where the condition is met
-matching_indices <- which(matches)
-matching_cell_names <- rownames(colData(results))[matching_indices]
-
-# Optional: show, filter, analyze further
-results[,matching_cell_names]$cell_type_weights
-
-cd_df <- colData(spe) |> as_tibble()
-
-cd_df |> 
-  filter(cell_type == "Endothelial", Endothelial != 0) |> 
-  summarise(mean = mean(Endothelial),
-            sd = sd(Endothelial),
-            min = min(Endothelial),
-            max = max(Endothelial),
-            mad = mad(Endothelial))
-cd_df |> 
-  filter(cell_type == "Endothelial") |> 
-  summarise(mean = mean(Endothelial),
-            sd = sd(Endothelial),
-            min = min(Endothelial),
-            max = max(Endothelial),
-            mad = mad(Endothelial))
 
 ```
 
-Creating a list of spatial experiment objects (one for each sample) and applying the deconvolution
-to all samples separately.
+#Calling deconvolution function for each sample
 ```{r}
-sce_ref <- readRDS("~/multiome_sce.rds") #reference dataset from multiome
-
-# loading visium HD objects from "analisi esplorative" (one for each block)
-for (i in c(1,2,3,4,5,6,7,9)) {
-    load(paste0("~/speHD", i, "_g.RData"))
-}
-
-spe_list <- list(
-    speHD1_g = speHD1_g,
-    speHD2_g = speHD2_g,
-    speHD3_g = speHD3_g,
-    speHD4_g = speHD4_g,
-    speHD5_g = speHD5_g,
-    speHD6_g = speHD6_g,
-    speHD7_g = speHD7_g,
-    speHD9_g = speHD9_g
-)
-
-subset_list <- list()
-
-#separating blocks into the 3 samples (using tissue_type) and then placing all spatial
-#experiment objects in a new list.
-for (spe_name in names(spe_list)) {
-    spe_obj <- spe_list[[spe_name]]
-    tissue_types <- unique(colData(spe_obj)$tissue_type)
-    for (tissue in tissue_types) {
-        subset_obj <- spe_obj[, colData(spe_obj)$tissue_type == tissue]
-        out_name <- paste0(tissue, "_", gsub("speHD", "b", gsub("_g", "", spe_name)))
-        subset_list[[out_name]] <- subset_obj
-    }
-}
-
-#calling deconvolution on each sample
 for (name in names(subset_list)) {
     run_my_rctd(subset_list[[name]], sce_ref, name)
 }
-
-save(subset_list,file="subset_list.RData")
-
 ```
 
-Plots to show deconvolution on tissue: for each sample 2 plots are created. In the first, for all cell types
-spots are coloured according to the probabiluty (weigth) for that cell type. In the second one, each
-spot is coloured according to its clustering labels (the cell type with highest weigth).
+#Fixing rctd results
 ```{r}
+#1. removing spots with null probabilities
+subset_list <- map(subset_list, \(spe) {spe <- fix_spe_celltypes(spe, score_cols)})
+map(subset_list, \(x){table(x$new_cell_type)})
 
-# subset_list <- lapply(subset_list, function(spe) {
-#    keep <- !is.na(spe$cell_type) & colSums(counts(spe)) > 0
-#    spe[,keep]
-# })
-# 
-# save(subset_list, file = "subset_list.RData")
+#2. removing cells with NA cell type
+subset_list <- lapply(subset_list, function(spe) {
+   keep <- !is.na(spe$new_cell_type) & colSums(counts(spe)) > 0
+   spe[,keep]
+})
+
+#3. manual correction on MuSC annotation: defined as Pax7 expressed or not
+subset_list <- lapply(subset_list, function(spe) {
+  print(table(spe$new_cell_type == "MuSC"))
+  pax7_pos <- counts(spe)["Pax7", ] > 0
+  spe$new_cell_type[pax7_pos] <- "MuSC"
+  print(table(spe$new_cell_type == "MuSC"))
+  return(spe)
+})
+
+#saving results
+saveRDS(subset_list, file = "bin16_list_ann.rds")
+```
+
+#Projections on tissue for all samples
+For each sample 2 plots are created. In the first, for all cell types spots are colored according to the probabiluty (weigth) for that cell type. In the second one, each spot is colored according to its clustering labels (the cell type with highest weigth).
+```{r}
 
 for (spe_name in names(subset_list)) {
   spe <- subset_list[[spe_name]]
@@ -247,26 +205,8 @@ for (spe_name in names(subset_list)) {
   scale_color_gradientn(colors = rev(hcl.colors(9, "Rocket")), limits = c(0, 1))
 
   ggsave(paste0(spe_name, "_types.png"), final_plot, width = 10, height = 8, dpi = 300)
-  
-your_color_vector <- c(
-    "Endothelial" = "#0072B2",       # blu vivo
-    "FAPs" = "#009E73",              # verde vivo
-    "Immune_Cells" = "#D55E00",      # arancione-rosso
-    "MuSC" = "#E69F00",              # arancione
-    "Myonuclei_IIb" = "#CC79A7",     # magenta
-    "Myonuclei_IIx" = "#56B4E9",     # azzurro chiaro
-    "Myonuclei_IIx_IIa" = "#F0E442", # giallo
-    "Myonuclei_IIx_IIb" = "#9B59B6", # viola chiaro
-    "Myonuclei_MTJ" = "#0099B4",     # turchese
-    "Myonuclei_NMJ" = "#DDAA33",     # senape
-    "Myonuclei_Trim63" = "#CC3311",  # rosso scuro
-    "Nervous_System" = "#44AA99",    # verde acqua
-    "Pericyte" = "#AA4499",          # viola/rosa
-    "Smooth_Muscular" = "#332288",   # blu-viola scuro
-    "Tenocyte" = "#A3E635"           # verde lime
-)
 
-stat1 <- plotCoords(spe, annotate = "cell_type", point_size = 0.5) +
+stat1 <- plotCoords(spe, annotate = "new_cell_type", point_size = 0.5) +
     scale_color_manual(values = your_color_vector) +
     theme(
       legend.key.width = unit(0.5, "lines"),
@@ -280,9 +220,6 @@ ggsave(paste0(out_prefix, "_dec.png"), stat1, width = 10, height = 8, dpi = 300)
 
 #Barplot to show cell type proportions for each sample
 ```{r}
-
-load("subset_list.RData")
-
 prop_df <- lapply(names(subset_list), function(name) {
   spe <- subset_list[[name]]
   tab <- table(spe$cell_type)
@@ -293,24 +230,6 @@ prop_df <- lapply(names(subset_list), function(name) {
     proportion = as.numeric(prop)
   )
 }) |> bind_rows()
-
-your_color_vector <- c(
-    "Endothelial" = "#0072B2",       # blu vivo
-    "FAPs" = "#009E73",              # verde vivo
-    "Immune_Cells" = "#D55E00",      # arancione-rosso
-    "MuSC" = "#E69F00",              # arancione
-    "Myonuclei_IIb" = "#CC79A7",     # magenta
-    "Myonuclei_IIx" = "#56B4E9",     # azzurro chiaro
-    "Myonuclei_IIx_IIa" = "#F0E442", # giallo
-    "Myonuclei_IIx_IIb" = "#9B59B6", # viola chiaro
-    "Myonuclei_MTJ" = "#0099B4",     # turchese
-    "Myonuclei_NMJ" = "#DDAA33",     # senape
-    "Myonuclei_Trim63" = "#CC3311",  # rosso scuro
-    "Nervous_System" = "#44AA99",    # verde acqua
-    "Pericyte" = "#AA4499",          # viola/rosa
-    "Smooth_Muscular" = "#332288",   # blu-viola scuro
-    "Tenocyte" = "#A3E635"           # verde lime
-)
 
 ggplot(prop_df, aes(x = sample, y = proportion, fill = cell_type)) +
   geom_bar(stat = "identity") +
@@ -340,9 +259,9 @@ prop_df_condition <- lapply(list_wb7, function(spe) {
 }) |> bind_rows() |> filter(!is.na(cell_type))
 
 prop_df_condition <- prop_df_condition %>%
-  count(tissue_type, cell_type) %>%
-  group_by(tissue_type) %>%
-  mutate(proportion = n / sum(n)) %>%
+  dplyr::count(tissue_type, cell_type) %>%
+  dplyr::group_by(tissue_type) %>%
+  dplyr::mutate(proportion = n / sum(n)) %>%
   ungroup()
 
 ggplot(prop_df_condition, aes(x = tissue_type, y = proportion, fill = cell_type)) +
@@ -357,40 +276,12 @@ ggplot(prop_df_condition, aes(x = tissue_type, y = proportion, fill = cell_type)
   ) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
-ggsave("cell_type_proportions_by_condition.png", width = 10, height = 6, dpi = 300)
-
-prop_df_condition <- purrr::imap_dfr(subset_list, function(spe, name) {
-  data.frame(
-    tissue_type = spe$tissue_type,
-    cell_type = spe$cell_type
-  ) |>
-    filter(!is.na(cell_type))
-}) |>
-  dplyr::count(tissue_type, cell_type) |>
-  group_by(tissue_type) |>
-  mutate(proportion = n / sum(n)) |>
-  ungroup()
-ggplot(prop_df_condition, aes(x = tissue_type, y = proportion, fill = cell_type)) +
-  geom_bar(stat = "identity") +
-  scale_fill_manual(values = your_color_vector) +
-  scale_x_discrete(limits = sort(unique(prop_per_sample$tissue_type)))
-  theme_minimal() +
-  labs(
-    title = "Proporzioni dei tipi cellulari per condizione",
-    x = "Condizione (tissue_type)",
-    y = "Proporzione",
-    fill = "Tipo Cellulare"
-  ) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ggsave("cell_type_proportions_by_condition.png", width = 10, height = 6, dpi = 300)
 
 ```
 
 #Same barplot for multiome annotations for comparison
 ```{r}
-
-sce_ref <- readRDS("multiome_sce.rds")
-sce_ref 
 table(colData(sce_ref)$condition)
 
 prop_df_condition <- 
@@ -493,115 +384,4 @@ ggsave("boxplot_cell_types.png", width = 10, height = 6, dpi = 300)
 
 ```
 
-#Spatial relationship between trim and 2b myo
-```{r}
-
-default_color <- "white"
-
-your_color_vector <- setNames(
-  rep(default_color, 16),
-  c("Endothelial", "FAPs", "Immune_Cells", "MuSC", "Myonuclei_IIx",
-    "Myonuclei_IIx_IIa", "Myonuclei_IIx_IIb", "Myonuclei_MTJ",
-    "Myonuclei_NMJ", "Nervous_System", "Pericyte",
-    "Smooth_Muscular", "Tenocyte",
-    "Myonuclei_IIb", "Myonuclei_Trim63")
-)
-
-your_color_vector["Myonuclei_IIb"]     <- "blue"
-your_color_vector["Myonuclei_Trim63"]  <- "red"
-
-plot_list <- lapply(names(subset_list), function(nm) {
-  spe <- subset_list[[nm]]
-  
-  plotCoords(spe, annotate = "cell_type", point_size = 0.7) +
-    scale_color_manual(values = your_color_vector, na.value = default_color) +
-    ggtitle(nm) +   # <- titolo con il nome del campione
-    theme(
-      legend.key.width  = unit(0.5, "lines"),
-      legend.key.height = unit(1, "lines"),
-      plot.title = element_text(hjust = 0.5)  # per centrare il titolo
-    )
-})
-
-plot_list
-```
- 
-#MuSC annotation correction
-MuSC are defined as cells where Pax7 gene is expressed.
-```{r}
-#IMPORTANTE: DEVO ANCHE TOGLIERE QUELLI DOVE NON E' ESPRESSO?
-multiome_sce <- readRDS("~/multiome_sce.rds")
-table(multiome_sce$subclusters == "MuSC",counts(multiome_sce)["Pax7", ] > 0)
-#nel multiome non è così quindi intanto le lascio
-
-subset_list <- lapply(subset_list, function(spe) {
-  print(table(spe$cell_type == "MuSC"))
-  pax7_pos <- counts(spe)["Pax7", ] > 0
-  spe$cell_type[pax7_pos] <- "MuSC"
-  print(table(spe$cell_type == "MuSC"))
-  return(spe)
-})
-save(subset_list,file="subset_list.RData")
-
-```
-
-
-#Creo un oggetto spatial unico e indago se i MuSC aumentano tra c26 e sham
-```{r}
-for (nm in names(subset_list)) {
-  spe <- subset_list[[nm]]
-  colData(spe)$sample_id <- rep(nm, ncol(spe))  
-  subset_list[[nm]] <- spe
-}
-
-spe_list <- subset_list[names(subset_list)]
-exclude_names <- c("sham_b7", "c26STAT3_b7", "c26_b7")
-combined_spe_wob7 <- do.call(
-  cbind, 
-  spe_list[!(names(spe_list) %in% exclude_names)]
-)
-table(colData(combined_spe_wob7)$sample_id)
-
-rm(subset_list)
-#REMOVING NAs
-keep <- !is.na(combined_spe_wob7$cell_type)
-combined_spe_wob7[,keep]
-save(combined_spe_wob7, file="combined_spe_wob7.RData")
-
-table(combined_spe_wob7$cell_type=="MuSC",combined_spe_wob7$tissue_type)
-prop.table(table(combined_spe_wob7$cell_type=="MuSC",combined_spe_wob7$tissue_type))
-#sono di più negli sham che nei c26 e molte di più nei trattamenti (torna!)
-table(combined_spe_wob7$cell_type=="MuSC",combined_spe_wob7$sample_id)
-
-#Modello binomiale per testare l'effetto della condizione
-y <- ifelse(combined_spe_wob7$cell_type=="MuSC",1,0)
-
-combined_spe_wob7$tissue_type <- relevel(combined_spe_wob7$tissue_type, ref = "sham")
-
-mod_mixed <- glmer(
-  I(cell_type == "MuSC") ~ tissue_type + (1 | sample_id),
-  data = as.data.frame(colData(combined_spe_wob7)),
-  family = binomial
-)
-
-summary(mod_mixed) 
-#si confermano le previsioni: con c26 diminuiscono rispetto a sham e con i trattamenti aumentano
-
-#visualizzazione?
-y <- prop.table(table(combined_spe_wob7$cell_type=="MuSC",combined_spe_wob7$sample_id))[2,]
-x <- c(rep("c26",3),rep("c26fox0",4),rep("c26murf1",4),rep("c26SMAD23",4),rep("c26STAT3",3),rep("sham",3))
-x <- as.factor(x)
-png("boxplot.png", width = 800, height = 600, res = 120)
-boxplot(y ~ x)
-```
-
-
-
-
- 
- 
- 
- 
- 
- 
  

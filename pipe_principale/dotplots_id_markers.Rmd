@@ -1,0 +1,299 @@
+---
+title: "dotplot_id_markers"
+output: html_document
+date: "2026-03-30"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#libraries and data
+```{r}
+library(readxl)
+library(tidyverse)
+library(SummarizedExperiment)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# markers <- read.table("~/geni_identita.txt")
+# markers <- as.vector(unlist(markers))
+genes_myo <- c("Ttn","Myh4","Myh1","Myh2","Col22a1","Ache","Etv5","Trim63")
+other_genes <- c("Ttn","Pdgfra","Dcn","Myh11","Trpc3","Cacna1c","Col11a1","Mkx","Col1a1","Ptprc",
+              "F13a1","Itgam","Pax7","Kcna1","Matn2","Mbp","Mpz","Prx","Cadm1","Reln","Mmrn1",
+              "Pecam1","Kdr")
+
+pb_16bin <- readRDS("~/pb_16bin.rds")
+pb_16bin <- computeSumFactors(pb_16bin)
+pb_16bin <- logNormCounts(pb_16bin, size.factors = sizeFactors(pb_16bin))
+
+pb_nuclei <- readRDS("~/pb_nuclei.rds")
+pb_nuclei <- computeSumFactors(pb_nuclei)
+pb_nuclei <- logNormCounts(pb_nuclei, size.factors = sizeFactors(pb_nuclei))
+```
+
+#Only myonuclei -----------------------------------------------------------------------------
+
+```{r}
+genes_myo_use <- genes_myo[genes_myo %in% rownames(pb_16bin)]
+myo <- c("Myonuclei_IIb","Myonuclei_IIx","Myonuclei_IIx_IIa","Myonuclei_IIx_IIb",
+         "Myonuclei_MTJ","Myonuclei_NMJ","Myonuclei_Trim63")
+pb_myo <- pb_16bin[genes_myo_use, pb_16bin$new_cell_type %in% myo]
+celltypes <- pb_myo$new_cell_type
+#expr_mat <- assay(pb_myo, "counts")
+expr_mat <- assay(pb_myo, "logcounts")
+
+#Compute average expression per cell type
+std_prof <- sapply(unique(celltypes), function(ct) {
+  rowMeans(expr_mat[, celltypes == ct, drop = FALSE])
+})
+
+#Compute % expressing cells
+pct_expr <- sapply(unique(celltypes), function(ct) {
+  rowMeans(expr_mat[, celltypes == ct, drop = FALSE] > 0)
+})
+
+#Convert to data.frame
+std_prof <- as.data.frame(std_prof)
+std_prof$gene <- rownames(std_prof)
+
+std_prof_pct <- as.data.frame(pct_expr)
+std_prof_pct$gene <- rownames(std_prof_pct)
+
+#Long format
+expr_long <- std_prof %>%
+  pivot_longer(
+    cols = -gene,
+    names_to = "celltype",
+    values_to = "expression"
+  )
+
+pct_long <- std_prof_pct %>%
+  pivot_longer(
+    cols = -gene,
+    names_to = "celltype",
+    values_to = "percent"
+  )
+
+#Merge expression + percent
+expr_long <- expr_long %>%
+  left_join(pct_long, by = c("gene", "celltype"))
+expr_long_filt <- expr_long %>%
+  filter(expression > 0)
+```
+
+#plot
+```{r}
+ggplot(expr_long_filt, aes(x = gene, y = celltype)) +
+  geom_point(aes(size = percent, color = expression)) +
+  scale_color_gradient(low = "grey90", high = "red") +
+  scale_size(range = c(1, 6)) +
+  scale_size_area() +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+#Aggregated myonuclei --------------------------------------------------------------------------
+
+```{r}
+colData(pb_16bin)$clusters <- ifelse(
+  grepl("^Myonuclei", colData(pb_16bin)$new_cell_type),
+  "Myonuclei", as.character(colData(pb_16bin)$new_cell_type)
+)
+colData(pb_16bin)$clusters <- factor(colData(pb_16bin)$clusters)
+
+other_genes_use <- other_genes[other_genes %in% rownames(pb_16bin)]
+pb_agg <- pb_16bin[other_genes_use, ]
+celltypes <- pb_agg$clusters
+#expr_mat <- assay(pb_agg, "counts") 
+expr_mat <- assay(pb_agg, "logcounts")
+celltypes_unique <- unique(celltypes)
+#Compute average expression per cell type
+std_prof <- sapply(unique(celltypes), function(ct) {
+  rowMeans(expr_mat[, celltypes == ct, drop = FALSE])
+})
+
+#Compute % expressing cells
+pct_expr <- sapply(unique(celltypes), function(ct) {
+  rowMeans(expr_mat[, celltypes == ct, drop = FALSE] > 0)
+})
+
+#Convert to data.frame
+std_prof <- as.data.frame(std_prof)
+colnames(std_prof) <- celltypes_unique
+std_prof$gene <- rownames(std_prof)
+
+std_prof_pct <- as.data.frame(pct_expr)
+colnames(std_prof_pct) <- celltypes_unique
+std_prof_pct$gene <- rownames(std_prof_pct)
+
+#Long format
+expr_long <- std_prof %>%
+  pivot_longer(
+    cols = -gene,
+    names_to = "celltype",
+    values_to = "expression"
+  )
+
+pct_long <- std_prof_pct %>%
+  pivot_longer(
+    cols = -gene,
+    names_to = "celltype",
+    values_to = "percent"
+  )
+
+#Merge expression + percent
+expr_long <- expr_long %>%
+  left_join(pct_long, by = c("gene", "celltype"))
+expr_long_filt <- expr_long %>%
+  filter(expression > 0)
+```
+
+#plot
+```{r}
+ggplot(expr_long_filt, aes(x = gene, y = celltype)) +
+  geom_point(aes(size = percent, color = expression)) +
+  scale_color_gradient(low = "grey90", high = "red") +
+  scale_size(range = c(1, 6)) +
+  scale_size_area() +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+#Only myonuclei - nuclei ------------------------------------------------------------------------
+
+```{r}
+genes_myo_use <- genes_myo[genes_myo %in% rownames(pb_nuclei)]
+myo <- c("Myonuclei_IIb","Myonuclei_IIx","Myonuclei_IIx_IIa","Myonuclei_IIx_IIb",
+         "Myonuclei_MTJ","Myonuclei_NMJ","Myonuclei_Trim63")
+pb_myo <- pb_nuclei[genes_myo_use, pb_nuclei$cell_type %in% myo]
+celltypes <- pb_myo$cell_type
+#expr_mat <- assay(pb_myo, "counts")
+expr_mat <- assay(pb_myo, "logcounts") 
+
+#Compute average expression per cell type
+std_prof <- sapply(unique(celltypes), function(ct) {
+  rowMeans(expr_mat[, celltypes == ct, drop = FALSE])
+})
+
+#Compute % expressing cells
+pct_expr <- sapply(unique(celltypes), function(ct) {
+  rowMeans(expr_mat[, celltypes == ct, drop = FALSE] > 0)
+})
+
+#Convert to data.frame
+std_prof <- as.data.frame(std_prof)
+std_prof$gene <- rownames(std_prof)
+
+std_prof_pct <- as.data.frame(pct_expr)
+std_prof_pct$gene <- rownames(std_prof_pct)
+
+#Long format
+expr_long <- std_prof %>%
+  pivot_longer(
+    cols = -gene,
+    names_to = "celltype",
+    values_to = "expression"
+  )
+
+pct_long <- std_prof_pct %>%
+  pivot_longer(
+    cols = -gene,
+    names_to = "celltype",
+    values_to = "percent"
+  )
+
+#Merge expression + percent
+expr_long <- expr_long %>%
+  left_join(pct_long, by = c("gene", "celltype"))
+expr_long_filt <- expr_long %>%
+  filter(expression > 0)
+```
+
+#plot
+```{r}
+ggplot(expr_long_filt, aes(x = gene, y = celltype)) +
+  geom_point(aes(size = percent, color = expression)) +
+  scale_color_gradient(low = "grey90", high = "red") +
+  scale_size(range = c(1, 6)) +
+  scale_size_area() +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+#Aggregated myonuclei - nuclei -------------------------------------------------------------
+```{r}
+colData(pb_nuclei)$clusters <- ifelse(
+  grepl("^Myonuclei", colData(pb_nuclei)$cell_type),
+  "Myonuclei", as.character(colData(pb_nuclei)$cell_type)
+)
+colData(pb_nuclei)$clusters <- factor(colData(pb_nuclei)$clusters)
+
+other_genes_use <- other_genes[other_genes %in% rownames(pb_nuclei)]
+pb_agg <- pb_nuclei[other_genes_use, ]
+celltypes <- pb_agg$clusters
+#expr_mat <- assay(pb_agg, "counts") 
+expr_mat <- assay(pb_agg, "logcounts")
+celltypes_unique <- unique(celltypes)
+#Compute average expression per cell type
+std_prof <- sapply(unique(celltypes), function(ct) {
+  rowMeans(expr_mat[, celltypes == ct, drop = FALSE])
+})
+
+#Compute % expressing cells
+pct_expr <- sapply(unique(celltypes), function(ct) {
+  rowMeans(expr_mat[, celltypes == ct, drop = FALSE] > 0)
+})
+
+#Convert to data.frame
+std_prof <- as.data.frame(std_prof)
+colnames(std_prof) <- celltypes_unique
+std_prof$gene <- rownames(std_prof)
+
+std_prof_pct <- as.data.frame(pct_expr)
+colnames(std_prof_pct) <- celltypes_unique
+std_prof_pct$gene <- rownames(std_prof_pct)
+
+#Long format
+expr_long <- std_prof %>%
+  pivot_longer(
+    cols = -gene,
+    names_to = "celltype",
+    values_to = "expression"
+  )
+
+pct_long <- std_prof_pct %>%
+  pivot_longer(
+    cols = -gene,
+    names_to = "celltype",
+    values_to = "percent"
+  )
+
+#Merge expression + percent
+expr_long <- expr_long %>%
+  left_join(pct_long, by = c("gene", "celltype"))
+expr_long_filt <- expr_long %>%
+  filter(expression > 0)
+```
+
+#plot
+```{r}
+ggplot(expr_long_filt, aes(x = gene, y = celltype)) +
+  geom_point(aes(size = percent, color = expression)) +
+  scale_color_gradient(low = "grey90", high = "red") +
+  scale_size(range = c(1, 6)) +
+  scale_size_area() +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+
+
+
+
+
+
+
+
