@@ -1,0 +1,236 @@
+---
+title: "GFP_CART"
+output: html_document
+date: "2026-05-18"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(arrow)
+library(Banksy)
+library(BiocParallel)
+library(DropletUtils)
+library(dplyr)
+library(edgeR)
+library(ggplot2)
+library(graphics)
+library(igraph)
+library(jsonlite)
+library(Matrix)
+library(matrixStats)
+library(OSTA.data)
+library(patchwork)
+library(pheatmap)
+library(S4Vectors)
+library(scDblFinder)
+library(scater)
+library(scran)
+library(scuttle)
+library(SingleCellExperiment)
+library(SpatialExperiment)
+library(SummarizedExperiment)
+library(tidyr)
+library(VisiumIO)
+library(spacexr)
+library(SpotSweeper)
+library(ggspavis)
+library(openxlsx)
+library(spatialreg)
+library(spdep)
+library(spaMM)
+```
+#objects
+```{r}
+bin16_list_ann <- readRDS("~/bin16_list_ann.rds")
+murf_list <- bin16_list_ann[names(bin16_list_ann) %in%
+                                   c("c26murf1_b2", "c26murf1_b3", "c26murf1_b5", "c26murf1_b9")]
+fox0_list <- bin16_list_ann[names(bin16_list_ann) %in%
+                              c("c26foxO_b1","c26foxO_b4","c26foxO_b6","c26foxO_b9")]
+smad_list <- bin16_list_ann[names(bin16_list_ann) %in%
+                              c("c26SMAD23_b2","c26SMAD23_b4","c26SMAD23_b5","c26SMAD23_b9")]
+
+murf_list$c26murf1_b2$to_discard <- NULL
+smad_list$c26SMAD23_b2$to_discard <- NULL
+murf_list$c26murf1_b2$in_treatment <- ifelse(murf_list$c26murf1_b2$in_treatment == TRUE, 1, 0)
+smad_list$c26SMAD23_b2$in_treatment <- ifelse(smad_list$c26SMAD23_b2$in_treatment == TRUE, 1, 0)
+
+# Define cell types
+myonuclei_types <- c("Myonuclei_IIb", "Myonuclei_IIx",
+                     "Myonuclei_IIx_IIa", "Myonuclei_IIx_IIb",
+                     "Myonuclei_MTJ", "Myonuclei_NMJ", "Myonuclei_Trim63")
+
+```
+
+Usa informazioni sui nearest neighboors trovati sulle coordinate come variabile nel modello.
+Sarebbe da ripetere per tutti i geni ed è da sistemare.
+```{r}
+for (nm in names(murf_list)) {
+    spe <- murf_list[[nm]]
+    colData(spe)$sample_id <- rep(nm, ncol(spe))
+    murf_list[[nm]] <- spe
+}
+
+combined_spe <- do.call(cbind, murf_list)
+combined_spe$in_treatment <- ifelse(combined_spe$in_treatment == 1, "gfp+", "untreated")
+filtered_spe <- combined_spe[, combined_spe$new_cell_type %in% myonuclei_types]
+coords <- as.data.frame(spatialCoords(filtered_spe))
+```
+
+#Trasformazione coordinate
+```{r}
+coords_global <- coords
+samples <- unique(filtered_spe$sample_id)
+
+# 1. Normalizzazione locale
+# Ogni campione parte da (0,0)
+
+for(s in samples){
+
+    idx <- filtered_spe$sample_id == s
+
+    coords_global[idx,1] <-
+        coords_global[idx,1] - min(coords_global[idx,1])
+
+    coords_global[idx,2] <-
+        coords_global[idx,2] - min(coords_global[idx,2])
+}
+
+# 2. Calcolo dimensioni massime
+widths <- sapply(samples, function(s){
+
+    idx <- filtered_spe$sample_id == s
+
+    diff(range(coords_global[idx,1]))
+})
+
+heights <- sapply(samples, function(s){
+
+    idx <- filtered_spe$sample_id == s
+
+    diff(range(coords_global[idx,2]))
+})
+
+max_width  <- max(widths)
+max_height <- max(heights)
+
+# gap di sicurezza
+padding_x <- max_width  * 0.15
+padding_y <- max_height * 0.15
+x_step <- max_width  + padding_x
+y_step <- max_height + padding_y
+
+# 3. Layout automatico a griglia
+n <- length(samples)
+ncol_layout <- ceiling(sqrt(n))
+
+for(i in seq_along(samples)){
+    s <- samples[i]
+    idx <- filtered_spe$sample_id == s
+    # posizione nella griglia
+    row_id <- (i - 1) %/% ncol_layout
+    col_id <- (i - 1) %%  ncol_layout
+    # offset globali
+    x_offset <- col_id * x_step
+    y_offset <- -row_id * y_step
+    coords_global[idx,1] <-
+        coords_global[idx,1] + x_offset
+    coords_global[idx,2] <-
+        coords_global[idx,2] + y_offset
+}
+
+coords_global[,2] <- coords_global[,2] * sqrt(3)
+
+coords_global <- as.matrix(coords_global)
+spatialCoords(filtered_spe) <- coords_global
+plotCoords(filtered_spe)
+```
+
+#modello
+```{r}
+int_coords <- matrix(as.integer(as.matrix(coords)), nrow=nrow(coords), ncol=ncol(coords))
+colnames(filtered_spe) <- paste0(colnames(filtered_spe),"_",filtered_spe$sample_id)
+
+#The function identifies neighbours of region points by Euclidean distance
+#risettare d1 e d2
+g <- dnearneigh(int_coords, d1 = 1.9, d2 = 2.1, row.names = colnames(filtered_spe))
+
+#The function generates a weights matrix for a neighbours list with spatial weights
+#for the chosen coding scheme.
+adj_matrix <- nb2mat(g, style="B", zero.policy=TRUE)
+
+Trim63 <- counts(filtered_spe)["Trim63",]
+df <- data.frame(Trim63, filtered_spe$in_treatment, filtered_spe$sample_id, spot=rownames(adj_matrix))
+df <- cbind(df, coords)
+df <- df[!is.na(filtered_spe$sample_id),]
+
+#per trovare l'offset
+y <- DGEList(counts(filtered_spe), group = filtered_spe$in_treatment)
+keep <- filterByExpr(y, group = y$samples$in_treatment)
+y <- y[keep, , keep.lib.sizes = FALSE]
+y <- calcNormFactors(y)
+design <- model.matrix(~ filtered_spe$in_treatment + filtered_spe$sample_id)
+y <- estimateDisp(y,design)
+fit <- glmFit(y,design)
+lrt <- glmLRT(fit,coef=2)
+topTags(lrt)
+
+df$tmm <- fit$offset[1,]
+fit.car <- fitme(Trim63 ~ filtered_spe$in_treatment + filtered_spe$sample_id +
+                   adjacency(1|spot) + offset(tmm), 
+                 adjMatrix = adj_matrix, data = df, family = negbin())
+summary(fit.car)
+
+coefs <- as.data.frame(summary(fit.car)$beta_table)
+lower <- coefs[,'Estimate'] - 1.96*coefs[, 'Cond. SE']
+upper <- coefs[,'Estimate'] + 1.96*coefs[, 'Cond. SE']
+terms <- rownames(coefs)
+data.frame(terms = terms,
+           logFC = coefs[,'Estimate'],
+           lower = lower,
+           upper = upper)[2,]
+
+```
+
+#sarebbe da fare per tutti i geni e poi testare la significatività
+Provare a mettere in parallelo e fare andare su NowWhat
+```{r}
+tmm <- fit$offset[1,]
+results <- list()
+
+for(gene in rownames(filtered_spe)) {
+  y <- counts(filtered_spe)[gene, ]
+  df <- data.frame(
+    y = y,
+    in_treatment = filtered_spe$in_treatment,
+    sample_id = filtered_spe$sample_id,
+    spot = rownames(adj_matrix),
+    tmm = tmm
+  )
+  df <- cbind(df, coords)
+  df <- df[!is.na(df$sample_id), ]
+
+  fit.car <- fitme(
+    y ~ in_treatment + sample_id +
+      adjacency(1 | spot) + offset(tmm),
+    adjMatrix = adj_matrix, data = df, family = negbin()
+  )
+
+  coefs <- as.data.frame(summary(fit.car)$beta_table)
+  tval <- coefs["in_treatment", "t-value"]
+  pval <- 2 * (1 - pnorm(abs(tval)))
+
+  results[[gene]] <- data.frame(
+    gene = gene,
+    logFC = coefs["in_treatment", "Estimate"],
+    tvalue = tval,
+    pvalue = pval
+  )
+}
+
+results <- do.call(rbind, results)
+
+```
+

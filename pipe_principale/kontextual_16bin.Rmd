@@ -1,0 +1,256 @@
+---
+title: "Kontextual_16bin"
+output: html_document
+date: "2026-04-10"
+---
+
+#LINK VIGNETTA 
+https://www.bioconductor.org/packages/devel/bioc/vignettes/Statial/inst/doc/Statial.html
+```{r}
+library(Statial)
+library(spicyR)
+library(ClassifyR)
+library(lisaClust)
+library(dplyr)
+library(SingleCellExperiment)
+library(SpatialExperiment)
+library(ggplot2)
+library(ggsurvfit)
+library(survival)
+library(tibble)
+library(treekoR)
+library(ggspavis)
+library(writexl)
+```
+
+Analizziamo la questione Trim - Endothelials / Trim - FAPs
+come contesto: myo2b / tutti i myo
+
+#Defining the hierarchy
+```{r}
+bin16_list_ann <- readRDS("~/bin16_list_ann.rds")
+biologicalHierarchy <- list(
+  "myonuclei" = c("Myonuclei_MTJ", "Myonuclei_Trim63", "Myonuclei_IIb",
+                  "Myonuclei_IIx_IIb", "Myonuclei_IIx",
+                  "Myonuclei_NMJ", "Myonuclei_IIx_IIa"),
+  "stromal"   = c("Endothelial", "FAPs", "Pericyte", "Smooth_Muscular", "Tenocyte"),
+  "rare"      = c("MuSC", "Nervous_System", "Immune_Cells")
+)
+
+```
+
+#Context = all myo
+```{r}
+# Define samples and cell types
+samples <- c("c26_b2", "c26_b4", "c26_b6")
+
+from_types <- c("Endothelial", "FAPs", "Pericyte", "Smooth_Muscular",
+                "Tenocyte", "MuSC", "Nervous_System", "Immune_Cells")
+
+# Loop over samples
+for (s in samples) {
+  
+  spe <- bin16_list_ann[[s]]
+  
+  # Create contextual cell type once
+  spe$celltype_kontextual <- spe$new_cell_type
+  spe$celltype_kontextual[spe$new_cell_type %in% biologicalHierarchy$myonuclei] <- "Myonuclei"
+  spe$celltype_kontextual[spe$new_cell_type == "Myonuclei_Trim63"] <- "Myonuclei_Trim63"
+  spe$celltype_kontextual <- as.factor(spe$celltype_kontextual)
+  
+  # Loop over "from" cell types
+  for (ct in from_types) {
+    
+    curves <- kontextCurve(
+      cells = spe,
+      from = ct,
+      to = "Myonuclei_Trim63",
+      parent = c("Myonuclei_Trim63", "Myonuclei"),
+      rs = seq(30, 160, 10),
+      cellType = "celltype_kontextual",
+      spatialCoords = c("pxl_col_in_fullres", "pxl_row_in_fullres"),
+      imageID = "sample_id"
+    )
+  
+    p <- kontextPlot(curves)
+    filename <- paste0("kontext_", s, "_from_", ct, ".png")
+    ggsave(filename, plot = p, width = 8, height = 6)
+  }
+}
+```
+
+#Context = myo 2b
+```{r}
+
+# Loop over samples
+for (s in samples) {
+  
+  spe <- bin16_list_ann[[s]]
+  
+  # Create contextual cell type once
+  spe$celltype_kontextual <- spe$new_cell_type
+  spe$celltype_kontextual[spe$new_cell_type %in% biologicalHierarchy$myonuclei] <- "Myonuclei"
+  spe$celltype_kontextual[spe$new_cell_type == "Myonuclei_IIb"] <- "Myonuclei_IIb"
+  spe$celltype_kontextual[spe$new_cell_type == "Myonuclei_Trim63"] <- "Myonuclei_Trim63"
+  spe$celltype_kontextual <- as.factor(spe$celltype_kontextual)
+  
+  # Loop over "from" cell types
+  for (ct in from_types) {
+    
+    curves <- kontextCurve(
+      cells = spe,
+      from = ct,
+      to = "Myonuclei_Trim63",
+      parent = c("Myonuclei_Trim63", "Myonuclei_IIb"),
+      rs = seq(5, 50, 5),
+      cellType = "celltype_kontextual",
+      spatialCoords = c("pxl_col_in_fullres", "pxl_row_in_fullres"),
+      imageID = "sample_id"
+    )
+  
+    p <- kontextPlot(curves)
+    filename <- paste0("kontext_", s, "_from_", ct, ".png")
+    ggsave(filename, plot = p, width = 8, height = 6)
+  }
+}
+```
+
+#Co-localization trim-2b: naive approach with bins
+```{r}
+bin16_list_ann <- readRDS("~/bin16_list_ann.rds")
+c26_list <- bin16_list_ann[names(bin16_list_ann) %in% c("c26_b2", "c26_b4", "c26_b6")]
+
+myo_types <- c("Myonuclei_MTJ", "Myonuclei_IIb", "Myonuclei_IIx_IIb", "Myonuclei_IIx",
+               "Myonuclei_NMJ","Myonuclei_IIx_IIa")
+
+null_prop <- list()
+means_list <- list()
+all_props <- list()
+
+for(i in seq_along(c26_list)) {
+  spe <- c26_list[[i]]
+  
+  #null proportions
+  myo2b <- sum(spe$new_cell_type[!is.na(spe$new_cell_type)] == "Myonuclei_IIb")
+  oth_myo <- sum(spe$new_cell_type[!is.na(spe$new_cell_type)] %in% myo_types)
+  null_prop[[i]] <- myo2b/oth_myo
+
+  trim_idx <- which(!is.na(spe$new_cell_type) & spe$new_cell_type == "Myonuclei_Trim63")
+  coords <- spatialCoords(spe)
+
+  adj_list <- lapply(trim_idx, function(ti) {
+    
+    dists <- sqrt((coords[,1] - coords[ti,1])^2 +
+                  (coords[,2] - coords[ti,2])^2)
+    #includes side neighboors (dist ~ 50) and diagonal neighboors (dist ~ 70)
+    idx <- which(dists > 0 & dists <= 72)
+    unname(colnames(spe)[idx])
+  })
+
+  names(adj_list) <- colnames(spe)[trim_idx]
+
+  #proportions
+  prop_list <- lapply(adj_list, function(trim_neigh){
+    celltypes <- spe$new_cell_type[rownames(colData(spe)) %in% trim_neigh]
+    celltypes <- celltypes[!is.na(celltypes)]
+    num <- sum(celltypes[!is.na(celltypes)] == "Myonuclei_IIb")
+    den <- sum(celltypes[!is.na(celltypes)] %in% myo_types)
+    if (den != 0) num/den else NA_real_
+  })
+  proportions <- as.vector(unlist(prop_list))
+  proportions <- proportions[!is.na(proportions)]
+  all_props[[i]] <- proportions
+  means_list[[i]] <- mean(proportions)
+  # hist(proportions,
+  #      main = paste("Sample", i),
+  #      xlab = "Proportion Myonuclei_IIb")
+  # abline(v = null_prop[[i]], col="red")
+  # d <- density(proportions)
+  # plot(d,
+  #      main = paste("Sample", i),
+  #      xlab = "Proportion Myonuclei_IIb")
+  # abline(v = null_prop[[i]], col = "red", lwd = 2)
+}
+means_list
+null_prop
+unlist(means_list) > unlist(null_prop)
+
+df <- data.frame(
+  global_prop = unlist(null_prop),
+  trim_prop = unlist(means_list)
+)
+rownames(df) <- names(c26_list)
+write_xlsx(df, "trim_2b_prop.xlsx")
+
+df <- data.frame(
+  sample = names(c26_list),
+  trim_mean = unlist(means_list),
+  global_mean = unlist(null_prop)
+)
+library(tidyr)
+# df_long <- pivot_longer(df,
+#                         cols = c(trim_mean, global_mean),
+#                         names_to = "type",
+#                         values_to = "value")
+# p <- ggplot(df_long, aes(x = sample, y = value, fill = type)) +
+#   geom_bar(stat = "identity", position = position_dodge()) +
+#   labs(x = "Sample",
+#        y = "Mean proportion Myonuclei_IIb",
+#        fill = "") +
+#   theme_minimal()
+# ggsave("barplot_means.png", p, width = 6, height = 4)
+
+diff_val <- means_list[[3]] - null_prop[[3]]
+df_diff <- data.frame(
+  sample = names(c26_list)[3],
+  difference = diff_val
+)
+p <- ggplot(df_diff, aes(x = sample, y = difference)) +
+  geom_bar(stat = "identity", fill = "steelblue", width = 0.3) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  coord_cartesian(ylim = c(-0.5, 0.5)) +
+  scale_x_discrete(expand = c(0, 5)) +
+  labs(y = "Score",
+       x = "",
+       title = "Enrichment of Myonuclei IIb in Trim63⁺ neighborhoods\n compared to random") +
+  theme_minimal()+
+  theme(
+    axis.title.x = element_text(size = 14),
+    axis.title.y = element_text(size = 14)
+  )
+ggsave("difference_sample3.pdf", p, width = 6, height = 4)
+
+```
+
+#checking NAs
+```{r}
+# spe <- c26_list$c26_b4
+# color_vector <- c(
+#     "Endothelial" = "#0072B2",       # blu vivo
+#     "FAPs" = "#009E73",              # verde vivo
+#     "Immune_Cells" = "#D55E00",      # arancione-rosso
+#     "MuSC" = "#E69F00",              # arancione
+#     "Myonuclei_IIb" = "#CC79A7",     # magenta
+#     "Myonuclei_IIx" = "#56B4E9",     # azzurro chiaro
+#     "Myonuclei_IIx_IIa" = "#F0E442", # giallo
+#     "Myonuclei_IIx_IIb" = "#9B59B6", # viola chiaro
+#     "Myonuclei_MTJ" = "#0099B4",     # turchese
+#     "Myonuclei_NMJ" = "#DDAA33",     # senape
+#     "Myonuclei_Trim63" = "#CC3311",  # rosso scuro
+#     "Nervous_System" = "#44AA99",    # verde acqua
+#     "Pericyte" = "#AA4499",          # viola/rosa
+#     "Smooth_Muscular" = "#332288",   # blu-viola scuro
+#     "Tenocyte" = "#A3E635"           # verde lime
+# )
+# 
+# plotCoords(spe, annotate = "new_cell_type", point_size = 0.5)+
+#     scale_color_manual(values = color_vector) +
+#     theme(
+#       legend.key.width = unit(0.5, "lines"),
+#       legend.key.height = unit(1, "lines")
+#     )
+
+```
+
+
+

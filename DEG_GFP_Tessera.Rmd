@@ -1,0 +1,195 @@
+---
+title: "DEG_GFP_Tessera"
+output: html_document
+date: "2026-05-12"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(TESSERA)
+library(BiocFileCache)
+library(SummarizedExperiment)
+library(SingleCellExperiment)
+library(SpatialExperiment)
+library(dplyr)
+library(reshape2)
+library(Matrix)
+library(MatrixGenerics)
+library(MASS)
+library(fdrtool)
+library(ggplot2)
+```
+
+#Data preparation
+```{r}
+bin16_list_ann <- readRDS("~/bin16_list_ann.rds")
+
+#per capire meglio mi adeguo alla vignetta e tengo più condizioni assieme
+treat_list <- bin16_list_ann[names(bin16_list_ann) %in%
+                                   c("c26murf1_b2", "c26murf1_b3", "c26murf1_b5", "c26murf1_b9",
+                                     "c26foxO_b1","c26foxO_b4","c26foxO_b6","c26foxO_b9",
+                                     "c26SMAD23_b2","c26SMAD23_b4","c26SMAD23_b5","c26SMAD23_b9")]
+treat_list$c26murf1_b2$to_discard <- NULL
+treat_list$c26SMAD23_b2$to_discard <- NULL
+treat_list$c26murf1_b2$in_treatment <- ifelse(treat_list$c26murf1_b2$in_treatment == TRUE, 1, 0)
+treat_list$c26SMAD23_b2$in_treatment <- ifelse(treat_list$c26SMAD23_b2$in_treatment == TRUE, 1, 0)
+
+myonuclei_types <- c("Myonuclei_IIb", "Myonuclei_IIx",
+                     "Myonuclei_IIx_IIa", "Myonuclei_IIx_IIb",
+                     "Myonuclei_MTJ", "Myonuclei_NMJ", "Myonuclei_Trim63")
+
+for (nm in names(treat_list)) {
+    spe <- treat_list[[nm]]
+    colData(spe)$sample_id <- rep(nm, ncol(spe))
+    treat_list[[nm]] <- spe
+}
+
+combined_spe <- do.call(cbind, treat_list)
+combined_spe$in_treatment <- ifelse(combined_spe$in_treatment == 1, "gfp+", "untreated")
+spe <- combined_spe[, combined_spe$new_cell_type %in% myonuclei_types]
+
+# Add the spatial coordinates into the metadata (convenience)
+colData(spe) <- cbind(colData(spe),spatialCoords(spe))
+
+#fixing non-unique colnames
+colnames(spe) <- paste0(colnames(spe), "_", spe$sample_id)
+rownames(colData(spe)) <- colnames(spe) 
+
+```
+
+```{r}
+rv <- rowVars(counts(spe))
+names(rv) <- rownames(spe)
+# Order the entire object by raw count variance (highest to lowest)
+spe <- spe[order(rv, decreasing = TRUE), ]
+```
+
+```{r}
+# Define covariate columns in metadata
+celltype_col <- "new_cell_type"
+sample_col <- "sample_id"
+gfp_col <- "in_treatment" #aggiungo, da capire poi dove metterla
+group_col <- "tissue_type"
+coord_cols <- c("pxl_row_in_fullres", "pxl_col_in_fullres")
+covariates_keep <- c(group_col, gfp_col) #NB: uso gfp al posto di celltype
+
+# Define reference levels (baselines) for each factor (celltype, sample, and condition)
+# ref_celltype <- ""
+# ref_sample <- ""
+# ref_group <- ""
+
+# Re-level factors to ensure the model uses the correct baseline
+# colData(spe)[, sample_col] <- relevel(factor(colData(spe)[, sample_col]), ref = ref_sample)
+# colData(spe)[, celltype_col] <- relevel(factor(colData(spe)[, celltype_col]), ref = ref_celltype)
+# colData(spe)[, group_col] <- relevel(factor(colData(spe)[, group_col]), ref = ref_group)
+
+```
+
+Multi-sample studies often require controlling for “sample effects” while samples are nested within broader experimental conditions To account for these effects without introducing multi-collinearity, we assign a nested ID (1, 2, 3…) to each sample within its respective condition.
+```{r}
+spe$tissue_type <- droplevels(spe$tissue_type)
+
+# Extract unique sample IDs for each experimental condition
+murf_ids <- unique(colData(spe)[, sample_col][colData(spe)[, group_col]  == "c26murf1"])
+smad_ids <- unique(colData(spe)[, sample_col][colData(spe)[, group_col]  == "c26SMAD23"])
+foxO_ids <- unique(colData(spe)[, sample_col][colData(spe)[, group_col]  == "c26foxO"])
+
+# Initialize a new ID vector
+new_id <- rep(0, nrow(colData(spe)))
+
+# Assign a numeric index to samples within each condition
+for (idx in 1:length(murf_ids)) {
+  new_id[colData(spe)[, sample_col] == murf_ids[idx]] <- idx
+}
+for (idx in 1:length(smad_ids)) {
+  new_id[colData(spe)[, sample_col] == smad_ids[idx]] <- idx
+}
+for (idx in 1:length(foxO_ids)) {
+  new_id[colData(spe)[, sample_col] == foxO_ids[idx]] <- idx
+}
+
+# Store the nested ID back into the spatial experiment object
+colData(spe)$nested_id <- factor(new_id)
+new_nested_sample_col <- "nested_id"
+#table(spe$nested_id,spe$tissue_type)
+   
+```
+
+```{r}
+# Build the formula string: ~ 0 + Group:celltype + Group:nested_id
+design_formula <- as.formula(paste0(" ~ 0 + ", 
+                                    group_col, ":", gfp_col, " + ", 
+                                    group_col, ":nested_id"))
+print(design_formula)
+# Create the design matrix
+X_mat <- model.matrix(design_formula, colData(spe))
+head(X_mat)
+
+X_mat <- X_mat[rownames(colData(spe)), ]
+identical(rownames(X_mat),rownames(colData(spe)))
+
+```
+# Ensure the design matrix is full rank
+```{r}
+if (rankMatrix(X_mat)[1] != ncol(X_mat)) {
+  stop("The design matrix is not full rank. Check for linear dependencies.")
+}
+dim(X_mat)
+head(colnames(X_mat))
+```
+
+#Lattice model for spatial correlation matrix
+For structured grid-based datasets, such as next-generation sequencing datasets from the Visium platform, you can simply provide the expected_num_neighbors argument (typically 6 for Visium due to its hexagonal grid). TESSERA then automatically determines the distance threshold required to satisfy the target neighbor count, defining any cells within this distance as adjacent.
+Leroux is our preferred default; it decomposes variance into spatially correlated and uncorrelated components and offers the fastest pre-computation.
+
+# Prepare data for the TESSERA package
+```{r}
+?TESSERA::prep_data
+rownames(X_mat) <- rownames(colData(spe))
+identical(rownames(X_mat),rownames(colData(spe)))
+identical(rownames(colData(spe)), colnames(counts(spe)))
+
+cm <- as.matrix(counts(spe)) 
+colnames(cm) <- colnames(spe)
+metadata = colData(spe)
+coords = spatialCoords(spe) #PROBLEMA NOMI
+rownames(coords) = colnames(spe)
+  
+TESSERA_data <- TESSERA::prep_data(
+  x = cm,
+  meta_data = metadata,
+  sample_col = sample_col,
+  coord_data = coords,
+  design_mat = X_mat,
+  model_type = "Leroux",
+  expected_num_neighbors = 6
+)
+
+```
+
+#Run TESSERA
+NB: METTERE IN PARALLELO -> VEDI VIGNETTA!!!
+
+By inspecting the fitted spatial covariance parameters, we can quantify the strength of the spatial dependence for the lattice models via the identifiable parameters gamma_hat or tau2_hat. 
+The MSE results, such as MSE_counts_sample relative to Mean_counts2_sample, facilitate the evaluation of fitted count accuracy on a per-sample basis.
+Finally, the Moran’s I metrics, specifically Moran_residuals, act as a critical diagnostic to ensure that the spatial structure has been adequately captured, indicating that the model has successfully accounted for the spatial dependency in the data.
+```{r}
+# Which gene to run
+gene_idx <- which(rownames(spe) == "Trim63")
+
+TESSERA_out <- TESSERA::TESSERA_lattice(
+  TESSERAData_obj = TESSERA_data,
+  gene_name = rownames(spe)[gene_idx],
+  model_type = "Leroux",
+)
+
+print(TESSERA_out$time)
+head(TESSERA_out$performanceSummary, 2)
+head(TESSERA_out$beta_hat)
+```
+
+After fitting models to hundreds or thousands of genes, we aim to identify which among them are differentially expressed. 
+

@@ -53,24 +53,17 @@ or in 2 different cell types across conditions.
 ```{r}
 # #sample identifiers
 # nuclei_list <- readRDS("~/nuclei_list_ann.rds")
-# 
+# # 
 # for (nm in names(nuclei_list)) {
 #   spe <- nuclei_list[[nm]]
 #   colData(spe)$sample_id <- rep(nm, ncol(spe))
 #   nuclei_list[[nm]] <- spe
 # }
-# 
-# #ATT: DEVONO COINCIDERE I COLDATA
-# # all_cols <- Reduce(union, lapply(nuclei_list, function(x) colnames(colData(x))))
-# # common_cols <- Reduce(intersect, lapply(nuclei_list, function(x) colnames(colData(x))))
-# # setdiff(all_cols, common_cols)
-# 
-# nuclei_list$blocco1_sham$in_treatment <- rep(NA,dim(nuclei_list$blocco1_sham)[2])
-# nuclei_list$blocco3_sham$in_treatment <- rep(NA,dim(nuclei_list$blocco3_sham)[2])
-# nuclei_list$blocco6_sham$in_treatment <- rep(NA,dim(nuclei_list$blocco6_sham)[2])
-# nuclei_list$blocco4_c26$in_treatment <- rep(FALSE,dim(nuclei_list$blocco4_c26)[2])
-# nuclei_list$blocco6_c26$in_treatment <- rep(FALSE,dim(nuclei_list$blocco6_c26)[2])
-# nuclei_list$blocco5_c26STAT3$in_treatment <- rep(TRUE,dim(nuclei_list$blocco5_c26STAT3)[2])
+
+#ATT: DEVONO COINCIDERE I COLDATA
+# all_cols <- Reduce(union, lapply(nuclei_list, function(x) colnames(colData(x))))
+# common_cols <- Reduce(intersect, lapply(nuclei_list, function(x) colnames(colData(x))))
+# setdiff(all_cols, common_cols)
 # 
 # combined_spe <- do.call(cbind, nuclei_list)
 # table(combined_spe$to_discard)

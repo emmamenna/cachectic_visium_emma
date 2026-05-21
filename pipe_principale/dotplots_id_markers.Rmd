@@ -25,8 +25,9 @@ other_genes <- c("Ttn","Pdgfra","Dcn","Myh11","Trpc3","Cacna1c","Col11a1","Mkx",
               "Pecam1","Kdr")
 
 pb_16bin <- readRDS("~/pb_16bin.rds")
-pb_16bin <- computeSumFactors(pb_16bin)
-pb_16bin <- logNormCounts(pb_16bin, size.factors = sizeFactors(pb_16bin))
+pb_16bin <- scran::computeSumFactors(pb_16bin)
+pb_16bin <- scuttle::logNormCounts(pb_16bin, size.factors = sizeFactors(pb_16bin))
+#saveRDS(pb_16bin, file="~/pb_16bin_log.rds")
 
 pb_nuclei <- readRDS("~/pb_nuclei.rds")
 pb_nuclei <- computeSumFactors(pb_nuclei)

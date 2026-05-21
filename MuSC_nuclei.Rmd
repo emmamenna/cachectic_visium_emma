@@ -47,6 +47,10 @@ library(openxlsx)
 library(zip)
 library(clusterProfiler)
 library(org.Mm.eg.db)
+library(SingleCellExperiment)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
 ```
 
 #MuSC annotation correction
@@ -326,3 +330,48 @@ addWorksheet(wb, "Downregolati")
 writeData(wb, "Downregolati", sig_down, rowNames = TRUE)
 saveWorkbook(wb,"musc_murf_c26.xlsx", overwrite = TRUE)
 ```
+
+```{r}
+pb <- readRDS("~/pb_nuclei.rds")
+pb_musc <- pb[,pb$cell_type == "MuSC"]
+pb_musc_rid <- pb_musc[,pb_musc$sampletype %in% c("sham", "c26", "c26murf1")]
+
+genes <- c("Pax7","Myod1","Myog","Myf6")
+
+expr <- assay(pb_musc_rid, "counts")
+expr_sub <- expr[genes, ]
+df <- as.data.frame(t(expr_sub))
+df$sampletype <- pb_musc_rid$sampletype
+
+# Long format
+df_long <- df %>%
+  pivot_longer(cols = all_of(genes), 
+               names_to = "gene", 
+               values_to = "expression")
+
+# Summary: media + percentuale espressione
+df_sum <- df_long %>%
+  group_by(sampletype, gene) %>%
+  summarise(
+    avg_exp = mean(expression),
+    pct_exp = mean(expression > 0) * 100,
+    .groups = "drop"
+  )
+
+df_sum <- df_sum %>%
+  mutate(sampletype = factor(sampletype,
+                             levels = c("sham", "c26", "c26murf1")))
+
+# Dotplot
+ggplot(df_sum, aes(x = sampletype, y = gene)) +
+  geom_point(aes(size = pct_exp, color = avg_exp)) +
+  scale_color_gradient(low = "grey80", high = "red") +
+  theme_minimal() +
+  labs(x = "Sample type", y = "Gene") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+
+
+

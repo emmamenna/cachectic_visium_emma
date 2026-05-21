@@ -41,15 +41,36 @@ gfp_transfer <- function(parquet_file, se8bin, se16bin) {
   return(se16bin)
 }
 
-
-
-
-
-
-
-
-
-
-
-
+#GFP VALUE ---------------------------------------------------------------
+gfp_value_transfer <- function(parquet_file, se8bin, se16bin) {
+  se8bin$cell_type16bin <- parquet_file$square_016um[
+    match(
+      colnames(se8bin),
+      parquet_file$square_008um
+    )
+  ]
+  
+  gfp_16 <- tapply(
+    se8bin$GFP_value,
+    se8bin$cell_type16bin,
+    function(x) {
+      x <- x[!is.na(x)]
+      if (length(x) == 0) {
+        NA
+      } else {
+        mean(x)
+      }
+    }
+  )
+  
+  print(summary(gfp_16))
+  print(head(gfp_16))
+  print(table(is.na(gfp_16)))
+  
+  # Assign the summarized GFP info
+  gfp_vec <- gfp_16[colnames(se16bin)]
+  se16bin$gfp_value <- as.numeric(gfp_vec)
+  
+  return(se16bin)
+}
 

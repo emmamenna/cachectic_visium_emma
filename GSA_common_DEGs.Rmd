@@ -1,0 +1,131 @@
+---
+title: "GSA_common_DEGs"
+output: html_document
+date: "2026-05-06"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(writexl)
+library(muscat)
+library(org.Mm.eg.db)
+library(clusterProfiler)
+library(readxl)
+library(SummarizedExperiment)
+library(limma)
+library(scater)
+library(openxlsx)
+```
+
+```{r}
+do_kegg_for_sheet <- function(gene_vec, sheet_name = NULL) {
+  genes <- bitr(gene_vec, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Mm.eg.db)
+  genes <- genes[!is.na(genes$ENTREZID), ]
+  if (nrow(genes) == 0) {
+    if(!is.null(sheet_name))
+      message("SKIPPING: No genes mapped for sheet ", sheet_name)
+    return(NULL)
+  }
+  kegg_gsa <- enrichKEGG(gene = genes$ENTREZID, organism = 'mmu', pvalueCutoff = 0.05)
+  # <-- NEW CHECK HERE
+  if (is.null(kegg_gsa) || is.null(kegg_gsa@result) || nrow(kegg_gsa@result) == 0) {
+    message("SKIPPING: KEGG returned NULL for sheet ", sheet_name)
+    return(NULL)
+  }
+  kegg_df <- as.data.frame(kegg_gsa@result)
+  sig_end_common_up <- kegg_df[kegg_df$p.adjust < 0.05, ]
+  if (nrow(sig_end_common_up) == 0) {
+    sig_end_common_up$gene_symbols <- character(0)
+    return(sig_end_common_up)
+  }
+  all_entrez <- unique(unlist(strsplit(sig_end_common_up$geneID, "/")))
+  id_map <- bitr(
+    all_entrez,
+    fromType = "ENTREZID",
+    toType   = "SYMBOL",
+    OrgDb    = org.Mm.eg.db
+  )
+  entrez2symbol <- setNames(id_map$SYMBOL, id_map$ENTREZID)
+  convert_core_enrichment <- function(entrez_string, lookup) {
+    entrez_ids <- strsplit(entrez_string, "/")[[1]]
+    symbols <- lookup[entrez_ids]
+    symbols <- symbols[!is.na(symbols)]
+    paste(symbols, collapse = "/")
+  }
+  sig_end_common_up$gene_symbols <- sapply(
+    sig_end_common_up$geneID,
+    convert_core_enrichment,
+    lookup = entrez2symbol
+  )
+  return(sig_end_common_up)
+}
+```
+
+#PER COMMON UP
+```{r}
+set.seed(6335)
+excel_path <- "~/up_genes_by_celltype.xlsx"
+sheet_names <- excel_sheets(excel_path)
+results_list <- list()
+for (sheet in sheet_names) {
+  message("Processing sheet: ", sheet)
+  end_common_up <- read_excel(excel_path, sheet = sheet)
+  symbols <- as.vector(end_common_up$Gene)
+  res <- do_kegg_for_sheet(symbols)
+  results_list[[sheet]] <- res
+}
+write.xlsx(results_list, file = "KEGG_results_by_sheet.xlsx")
+```
+
+#PER COMMON DOWN
+```{r}
+set.seed(6335)
+excel_path <- "~/down_genes_by_celltype.xlsx"
+sheet_names <- excel_sheets(excel_path)
+results_list <- list()
+for (sheet in sheet_names) {
+  message("Processing sheet: ", sheet)
+  end_common_up <- read_excel(excel_path, sheet = sheet)
+  symbols <- as.vector(end_common_up$Gene)
+  res <- do_kegg_for_sheet(symbols, sheet_name = sheet)
+  if(!is.null(res)) results_list[[sheet]] <- res
+}
+write.xlsx(results_list, file = "KEGG_results_by_sheet.xlsx")
+```
+
+#PER UNICI UP
+```{r}
+set.seed(6335)
+excel_path <- "~/up_genes_unici.xlsx"
+sheet_names <- excel_sheets(excel_path)
+results_list <- list()
+for (sheet in sheet_names) {
+  message("Processing sheet: ", sheet)
+  end_common_up <- read_excel(excel_path, sheet = sheet)
+  symbols <- as.vector(end_common_up$Gene)
+  res <- do_kegg_for_sheet(symbols, sheet_name = sheet)
+  if(!is.null(res)) results_list[[sheet]] <- res
+}
+write.xlsx(results_list, file = "GSEA_unici_UP.xlsx")
+```
+
+#PER UNICI DOWN
+```{r}
+set.seed(6335)
+excel_path <- "~/down_genes_unici.xlsx"
+sheet_names <- excel_sheets(excel_path)
+results_list <- list()
+for (sheet in sheet_names) {
+  message("Processing sheet: ", sheet)
+  end_common_up <- read_excel(excel_path, sheet = sheet)
+  symbols <- as.vector(end_common_up$Gene)
+  res <- do_kegg_for_sheet(symbols, sheet_name = sheet)
+  if(!is.null(res)) results_list[[sheet]] <- res
+}
+write.xlsx(results_list, file = "GSEA_unici_DOWN.xlsx")
+```
+
+

@@ -1,0 +1,107 @@
+---
+title: "DEG_GFP_CART"
+output: html_document
+date: "2026-05-06"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(arrow)
+library(Banksy)
+library(BiocParallel)
+library(DropletUtils)
+library(dplyr)
+library(edgeR)
+library(ggplot2)
+library(graphics)
+library(igraph)
+library(jsonlite)
+library(Matrix)
+library(matrixStats)
+library(OSTA.data)
+library(patchwork)
+library(pheatmap)
+library(S4Vectors)
+library(scDblFinder)
+library(scater)
+library(scran)
+library(scuttle)
+library(SingleCellExperiment)
+library(SpatialExperiment)
+library(SummarizedExperiment)
+library(tidyr)
+library(VisiumIO)
+library(spacexr)
+library(SpotSweeper)
+library(ggspavis)
+library(openxlsx)
+```
+
+```{r}
+gfp_list <- readRDS("~/bin16_list_ann_gfp.rds")
+```
+
+#data preparation
+```{r}
+
+#gfp_list$c26STAT3_b1$gfp_value <- rep(,length()) #oh oh
+
+#facciamo intanto una prova coi foxo
+fox0_list <- gfp_list[names(gfp_list) %in% c("c26foxO_b1","c26foxO_b4","c26foxO_b6","c26foxO_b9")]
+
+#in_treatment and gfp_value do not necessarily coincide for how they were defined
+for(spe in fox0_list){
+  boxplot(spe$gfp_value ~ spe$in_treatment)
+}
+#but at least gfp_values of in_treatment are higher
+
+#using log to make it more symmetric
+for(spe in fox0_list){
+  print(summary(spe$gfp_value))
+  plot(density(spe$gfp_value))
+}
+
+fox0_list <- lapply(fox0_list, function(spe){
+  spe$gfp_log_value <- log(spe$gfp_value+1)
+  return(spe)  # Return the modified object
+})
+
+```
+
+#Creating a unique single-cell object
+```{r}
+for (nm in names(fox0_list)) {
+  spe <- fox0_list[[nm]]
+  colData(spe)$sample_id <- rep(nm, ncol(spe))
+  fox0_list[[nm]] <- spe
+}
+combined_spe <- do.call(cbind, fox0_list)
+```
+
+#Exploratory analysis
+```{r}
+lapply(fox0_list, function(spe) {
+  print(plotCoords(spe, annotate="gfp_log_value"))
+})
+
+```
+
+```{r}
+plotColData(combined_spe, y = "gfp_log_value", x = "sample_id", colour_by = "tissue_type")
+```
+
+```{r}
+hist(combined_spe$gfp_log_value)
+hist(combined_spe$gfp_value)
+summary(combined_spe$gfp_value) 
+summary(combined_spe$gfp_log_value)
+```
+
+
+
+
+
+

@@ -3,6 +3,12 @@ library(ggnewscale)
 library(SpatialExperiment)
 library(scales)
 library(viridis)
+library(scran)
+library(ggspavis)
+library(dplyr)
+library(purrr)
+library(arrow)
+
 # 
 # 
 # #TRIM/MYH4 SOVRAPPOSITION WITH 16BINS AND NUCLEI
@@ -148,61 +154,61 @@ library(viridis)
 
 #Annotation based trim-2b sovrapposition ----------------------------------------------------------
 
-nuclei_list <- readRDS("~/nuclei_list_ann.rds")
-c26_list <- nuclei_list[names(nuclei_list) %in% c("blocco4_c26","blocco6_c26")]
-
-default_color <- "white"
-your_color_vector <- setNames(
-  rep(default_color, 16),
-  c("Endothelial", "FAPs", "Immune_Cells", "MuSC", "Myonuclei_IIx",
-    "Myonuclei_IIx_IIa", "Myonuclei_IIx_IIb", "Myonuclei_MTJ",
-    "Myonuclei_NMJ", "Nervous_System", "Pericyte",
-    "Smooth_Muscular", "Tenocyte",
-    "Myonuclei_IIb", "Myonuclei_Trim63")
-)
-your_color_vector["Myonuclei_Trim63"] <- "orange"
-
-plot_list <- lapply(names(c26_list), function(nm) {
-  spe <- c26_list[[nm]]
-  spe <- spe[,spe$to_discard == "FALSE"]
-  spe$in_tissue <- rep(TRUE,dim(spe)[2])
-  plotCoords(spe, annotate = "cell_type", point_size = 0.9,
-             x_coord = "y_coord", y_coord = "x_coord") +
-    scale_color_manual(values = your_color_vector, na.value = default_color) +
-    ggtitle(nm) + 
-    theme(
-      legend.key.width  = unit(0.5, "lines"),
-      legend.key.height = unit(1, "lines"),
-      plot.title = element_text(hjust = 0.5)
-    )
-})
-
-bin16_list <- readRDS("~/subset_list_updated.rds")
-c26_bin_list <- bin16_list[names(bin16_list) %in% c("c26_b4","c26_b6")]
-names(c26_bin_list) <- c("blocco4_c26","blocco6_c26")
-
-default_color <- "white"
-your_color_vector <- setNames(
-  rep(default_color, 16),
-  c("Endothelial", "FAPs", "Immune_Cells", "MuSC", "Myonuclei_IIx",
-    "Myonuclei_IIx_IIa", "Myonuclei_IIx_IIb", "Myonuclei_MTJ",
-    "Myonuclei_NMJ", "Nervous_System", "Pericyte",
-    "Smooth_Muscular", "Tenocyte",
-    "Myonuclei_IIb", "Myonuclei_Trim63")
-)
-your_color_vector["Myonuclei_IIb"] <- "lightblue"
-plot_list <- lapply(names(c26_bin_list), function(nm) {
-  spe <- c26_bin_list[[nm]]
-  spe$in_tissue <- rep(TRUE,dim(spe)[2])
-  plotCoords(spe, annotate = "new_cell_type", point_size = 0.9) +
-    scale_color_manual(values = your_color_vector, na.value = default_color) +
-    ggtitle(nm) + 
-    theme(
-      legend.key.width  = unit(0.5, "lines"),
-      legend.key.height = unit(1, "lines"),
-      plot.title = element_text(hjust = 0.5)
-    )
-})
+# nuclei_list <- readRDS("~/nuclei_list_ann.rds")
+# c26_list <- nuclei_list[names(nuclei_list) %in% c("blocco4_c26","blocco6_c26")]
+# 
+# default_color <- "white"
+# your_color_vector <- setNames(
+#   rep(default_color, 16),
+#   c("Endothelial", "FAPs", "Immune_Cells", "MuSC", "Myonuclei_IIx",
+#     "Myonuclei_IIx_IIa", "Myonuclei_IIx_IIb", "Myonuclei_MTJ",
+#     "Myonuclei_NMJ", "Nervous_System", "Pericyte",
+#     "Smooth_Muscular", "Tenocyte",
+#     "Myonuclei_IIb", "Myonuclei_Trim63")
+# )
+# your_color_vector["Myonuclei_Trim63"] <- "orange"
+# 
+# plot_list <- lapply(names(c26_list), function(nm) {
+#   spe <- c26_list[[nm]]
+#   spe <- spe[,spe$to_discard == "FALSE"]
+#   spe$in_tissue <- rep(TRUE,dim(spe)[2])
+#   plotCoords(spe, annotate = "cell_type", point_size = 0.9,
+#              x_coord = "y_coord", y_coord = "x_coord") +
+#     scale_color_manual(values = your_color_vector, na.value = default_color) +
+#     ggtitle(nm) + 
+#     theme(
+#       legend.key.width  = unit(0.5, "lines"),
+#       legend.key.height = unit(1, "lines"),
+#       plot.title = element_text(hjust = 0.5)
+#     )
+# })
+# 
+# bin16_list <- readRDS("~/bin16_list_ann.rds")
+# c26_bin_list <- bin16_list[names(bin16_list) %in% c("c26_b4","c26_b6")]
+# names(c26_bin_list) <- c("blocco4_c26","blocco6_c26")
+# 
+# default_color <- "white"
+# your_color_vector <- setNames(
+#   rep(default_color, 16),
+#   c("Endothelial", "FAPs", "Immune_Cells", "MuSC", "Myonuclei_IIx",
+#     "Myonuclei_IIx_IIa", "Myonuclei_IIx_IIb", "Myonuclei_MTJ",
+#     "Myonuclei_NMJ", "Nervous_System", "Pericyte",
+#     "Smooth_Muscular", "Tenocyte",
+#     "Myonuclei_IIb", "Myonuclei_Trim63")
+# )
+# your_color_vector["Myonuclei_IIb"] <- "lightblue"
+# plot_list <- lapply(names(c26_bin_list), function(nm) {
+#   spe <- c26_bin_list[[nm]]
+#   spe$in_tissue <- rep(TRUE,dim(spe)[2])
+#   plotCoords(spe, annotate = "new_cell_type", point_size = 0.9) +
+#     scale_color_manual(values = your_color_vector, na.value = default_color) +
+#     ggtitle(nm) + 
+#     theme(
+#       legend.key.width  = unit(0.5, "lines"),
+#       legend.key.height = unit(1, "lines"),
+#       plot.title = element_text(hjust = 0.5)
+#     )
+# })
 
 #GRAFICO UNICO ------------------------------------------------------------------------------
 
@@ -212,50 +218,47 @@ range(spatialCoords(c26_list$blocco4_c26)[,2])
 range(spatialCoords(c26_bin_list$blocco4_c26)[,2])
 range(spatialCoords(c26_bin_list$blocco4_c26)[,1])
 
-library(ggplot2)
-library(SingleCellExperiment)
+# plot_list <- lapply(names(c26_list), function(nm) {
+#   
+#   spe_nuclei <- c26_list[[nm]][, c26_list[[nm]]$to_discard == "FALSE"]
+#   spe_bin    <- c26_bin_list[[nm]]
+#   
+#   # Estrai coordinate e annotazioni
+#   df_bin <- data.frame(
+#     x = scale(spatialCoords(spe_bin)[,1]),
+#     y = scale(spatialCoords(spe_bin)[,2]),
+#     new_cell_type = colData(spe_bin)$new_cell_type
+#   )
+#   print(range(df_bin$y))
+#   df_bin$color <- ifelse(df_bin$new_cell_type == "Myonuclei_IIb", "lightblue", "white")
+#   
+#   df_nuclei <- data.frame(
+#     x = scale(spatialCoords(spe_nuclei)[,2]),
+#     y = scale(spatialCoords(spe_nuclei)[,1]),
+#     cell_type = colData(spe_nuclei)$cell_type
+#   )
+#   print(range(df_nuclei$y))
+#   df_nuclei$color <- ifelse(df_nuclei$cell_type == "Myonuclei_Trim63", "orange", "white")
+#   
+#   # Combina i due data.frame in uno solo
+#   df_plot <- rbind(
+#     data.frame(x = df_bin$x, y = df_bin$y, color = df_bin$color),
+#     data.frame(x = df_nuclei$x, y = df_nuclei$y, color = df_nuclei$color)
+#   )
+#   
+#   # Plot unico con un solo mapping colore
+#   ggplot(df_plot, aes(x = x, y = y, color = color)) +
+#     geom_point(size = 0.9, alpha = 0.8) +
+#     scale_color_identity() +  # usa direttamente i colori già definiti
+#     ggtitle(nm) +
+#     theme(
+#       legend.position = "none",
+#       plot.title = element_text(hjust = 0.5)
+#     )
+# })
+# plot_list
 
-plot_list <- lapply(names(c26_list), function(nm) {
-  
-  spe_nuclei <- c26_list[[nm]][, c26_list[[nm]]$to_discard == "FALSE"]
-  spe_bin    <- c26_bin_list[[nm]]
-  
-  # Estrai coordinate e annotazioni
-  df_bin <- data.frame(
-    x = scale(spatialCoords(spe_bin)[,1]),
-    y = scale(spatialCoords(spe_bin)[,2]),
-    new_cell_type = colData(spe_bin)$new_cell_type
-  )
-  print(range(df_bin$y))
-  df_bin$color <- ifelse(df_bin$new_cell_type == "Myonuclei_IIb", "lightblue", "white")
-  
-  df_nuclei <- data.frame(
-    x = scale(spatialCoords(spe_nuclei)[,2]),
-    y = scale(spatialCoords(spe_nuclei)[,1]),
-    cell_type = colData(spe_nuclei)$cell_type
-  )
-  print(range(df_nuclei$y))
-  df_nuclei$color <- ifelse(df_nuclei$cell_type == "Myonuclei_Trim63", "orange", "white")
-  
-  # Combina i due data.frame in uno solo
-  df_plot <- rbind(
-    data.frame(x = df_bin$x, y = df_bin$y, color = df_bin$color),
-    data.frame(x = df_nuclei$x, y = df_nuclei$y, color = df_nuclei$color)
-  )
-  
-  # Plot unico con un solo mapping colore
-  ggplot(df_plot, aes(x = x, y = y, color = color)) +
-    geom_point(size = 0.9, alpha = 0.8) +
-    scale_color_identity() +  # usa direttamente i colori già definiti
-    ggtitle(nm) +
-    theme(
-      legend.position = "none",
-      plot.title = element_text(hjust = 0.5)
-    )
-})
-plot_list
-
-##########################################################
+####################################  final version    ###############################################
 plot_list <- lapply(names(c26_list), function(nm) {
   
   spe_nuclei <- c26_list[[nm]][, c26_list[[nm]]$to_discard == "FALSE"]
@@ -311,6 +314,7 @@ plot_list <- lapply(names(c26_list), function(nm) {
 
 plot_list
 
+#passaggio dati -------------------------------------------------------------------------------
 library(purrr)
 nuclei_list_ann <- readRDS("~/nuclei_list_ann.rds")
 bin16_list_ann <- readRDS("~/bin16_list_ann.rds")
@@ -329,9 +333,6 @@ df_annot_bin <- map(bin16_list_ann, function(spe_b){
   )
 })
 
-library(dplyr)
-library(purrr)
-library(arrow)
 
 df_combined <- imap_dfr(df_annot_bin, ~ .x %>%
                           mutate(sample = .y))
@@ -339,7 +340,5 @@ write_parquet(df_combined, "bin_plot_info.parquet")
 df_combined_nuclei <- imap_dfr(df_annot_nuclei, ~ .x %>%
                           mutate(sample = .y))
 write_parquet(df_combined_nuclei, "nuclei_plot_info.parquet")
-
-
 
 

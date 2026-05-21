@@ -77,9 +77,7 @@ library(treekoR)
 #casualmente all’interno del contesto.
 
 ```{r}
-
-load("~/subset_list_filtered.RData") #NB: usa solo le coordinate, non importa la normalizzazione
-#prendo i mionuclei come contesto di riferimento
+subset_list <- readRDS("~/bin16_list_ann.rds")
 
 biologicalHierarchy <- list(
   "myonuclei" = c("Myonuclei_MTJ", "Myonuclei_Trim63", "Myonuclei_IIb",
@@ -88,87 +86,57 @@ biologicalHierarchy <- list(
   "stromal"   = c("Endothelial", "FAPs", "Pericyte", "Smooth_Muscular", "Tenocyte"),
   "rare"      = c("MuSC", "Nervous_System", "Immune_Cells")
 )
-
-spe <- subset_list$c26_b2
-spe$cellTypeNew <- spe$cell_type
-levels(spe$cellTypeNew) <- c(levels(spe$cellTypeNew),"Myonuclei")
-spe$cellTypeNew[spe$cell_type %in% biologicalHierarchy$myonuclei] <- "Myonuclei"
-
-curves <- kontextCurve(
-  cells = spe,
-  from = "Myonuclei_Trim63",
-  to = "Myonuclei_IIb",
-  parent = biologicalHierarchy$myonuclei,
-  rs = seq(50,500,100),
-  cellType = "cell_type",
-  spatialCoords = c("pxl_col_in_fullres", "pxl_row_in_fullres"),
-  imageID = "sample_id",
-  #inhom = TRUE
-)
-#il raggio è nella stessa unità delle coordinate perché è una soglia
-#posta sulla distanza euclidea degli spot (che hanno le coordinate in pixel)
-#quindi è in pixel 
-
-curves 
-kontextPlot(curves)
-#ATTENZIONE: I VALORI RIPORTATI SONO sqrt(L(r)/pi) - r!
-#QUINDI CONTA LO ZERO COME REFERENCE
-#"no spatial association = centered in 0 with small variance" dall'articolo
-#quindi in questo caso abbiamo un'attrazione da un certo raggio in poi
-
-#per un altro campione --------------------------------------------------------------------
-spe <- subset_list$c26_b4
-spe$cellTypeNew <- spe$cell_type
-levels(spe$cellTypeNew) <- c(levels(spe$cellTypeNew),"Myonuclei")
-spe$cellTypeNew[spe$cell_type %in% biologicalHierarchy$myonuclei] <- "Myonuclei"
-
-curves <- kontextCurve(
-  cells = spe,
-  from = "Myonuclei_Trim63",
-  to = "Myonuclei_IIb",
-  parent = biologicalHierarchy$myonuclei,
-  rs = seq(50,5000,1000),
-  cellType = "cell_type",
-  spatialCoords = c("pxl_col_in_fullres", "pxl_row_in_fullres"),
-  imageID = "sample_id",
-  #inhom = TRUE
-)
-
-curves 
-kontextPlot(curves)
-#il raggio è 8 bin = 25 pixel circa quindi ci può stare
-
-
 ```
 
-
-#TUTTI I CAMPIONI (TRANNE SHAM)
+#function
 ```{r}
-load("~/subset_list_filtered.RData")
-subset_list <- subset_list[!names(subset_list) %in% c("sham_b1","sham_b6","sham_b3")]
-plot_list <- list()  # crea lista vuota per salvare i plot
+process_spatial_curve <- function(spe, biologicalHierarchy, sample_name) {
+  spe$cellTypeNew <- factor(spe$new_cell_type)
+  if(!"Myonuclei" %in% levels(spe$cellTypeNew)) {
+    spe$cellTypeNew <- factor(spe$cellTypeNew, levels = c(levels(spe$cellTypeNew), "Myonuclei"))
+  }
+  myonuclei_idx <- spe$new_cell_type %in% biologicalHierarchy$myonuclei
+  spe$cellTypeNew[myonuclei_idx] <- "Myonuclei"
 
-#NON VA PER QUASI NESSUN CAMPIONE
-#se no mi baso direttamente sulle curve senza contesto e pace
-for (i in seq_along(subset_list)) {
-  spe_i <- subset_list[[i]] 
-  
   curves <- kontextCurve(
-    cells = spe_i,
+    cells = spe,
     from = "Myonuclei_Trim63",
     to = "Myonuclei_IIb",
-    parent = c("Myonuclei_MTJ", "Myonuclei_Trim63","Myonuclei_IIb","Myonuclei_IIx_IIb","Myonuclei_IIx",
-               "Myonuclei_NMJ","Myonuclei_IIx_IIa"),
-    rs = seq(50,5000,1000),,
+    parent = biologicalHierarchy$myonuclei,
+    rs = seq(30, 160, 10),
     cellType = "cell_type",
     spatialCoords = c("pxl_col_in_fullres", "pxl_row_in_fullres"),
-    imageID = "sample_id",
-    inhom = TRUE
+    imageID = "sample_id"
+    # inhom = TRUE
   )
-  
-  plot_list[[i]] <- kontextPlot(curves) +
-    ggtitle(names(subset_list)[i])
-}
+  print(curves)
 
+  # Try to catch ggplot objects returned by kontextPlot
+  png_filename <- file.path(paste0("kontextCurve_", sample_name, ".png"))
+  # If kontextPlot returns a ggplot object:
+  plot_obj <- kontextPlot(curves)
+  if (inherits(plot_obj, "ggplot")) {
+    ggplot2::ggsave(png_filename, plot = plot_obj, width = 6, height = 4)
+  } else {
+    # If kontextPlot plots directly to the active device:
+    png(png_filename, width = 1800, height = 1200, res = 200)
+    kontextPlot(curves)
+    dev.off()
+  }
+  invisible(curves)
+}
 ```
+
+#apply to c26 samples
+```{r}
+sample_names <- c("c26_b2", "c26_b4", "c26_b6")
+
+lapply(sample_names, function(sn) {
+  cat("\nProcessing sample:", sn, "\n")
+  spe <- subset_list[[sn]]
+  process_spatial_curve(spe, biologicalHierarchy, sn)
+})
+```
+
+
 

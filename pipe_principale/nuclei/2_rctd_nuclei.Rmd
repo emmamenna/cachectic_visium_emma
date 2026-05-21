@@ -46,7 +46,7 @@ library(purrr)
 #Objects
 ```{r}
 sce_ref <- readRDS("~/multiome_sce.rds") #reference dataset
-nuclei_list_raw <- readRDS("~/nuclei_list_raw.rds")
+nuclei_list <- readRDS("~/nuclei_list_raw.rds")
 
 color_vector <- c(
     "Endothelial" = "#0072B2",       # blu vivo
@@ -96,6 +96,41 @@ I set UMI_min very low considering the low counts in nuclei
 and having assessed the difficulty of this algorithm in
 attributing a significant annotation.
 ```{r}
+# run_rctd_doublet <- function(spe, sce_ref, out_prefix) {
+#   set.seed(9237)
+#   
+#   # data preparation
+#   rctd_data <- createRctd(
+#     spatial_experiment = spe,
+#     reference_experiment = sce_ref,
+#     cell_type_col = "subclusters",
+#     UMI_min = 10,
+#     UMI_min_sigma = 50,
+#   )
+#   
+#   # deconvolution in doublet mode
+#   results <- runRctd(rctd_data, rctd_mode = "doublet")
+# 
+#   pixels <- colnames(assay(results))
+#   
+#   first_type_map  <- setNames(colData(results)$first_type, pixels)
+#   second_type_map <- setNames(colData(results)$second_type, pixels)
+#   class_map       <- setNames(colData(results)$spot_class, pixels)
+#   
+#   spe$cell_type   <- first_type_map[as.character(spe$cell_id)]
+#   spe$second_type <- second_type_map[as.character(spe$cell_id)]
+#   spe$spot_class  <- class_map[as.character(spe$cell_id)]
+#   
+#   print(table(spe$spot_class, useNA = "ifany"))
+#   
+#   assign("nuclei_list", replace(nuclei_list, out_prefix, spe), envir = .GlobalEnv)
+#   
+#   invisible(spe)
+# }
+```
+
+#LOWERING CONFIDENT THRESHOLD
+```{r}
 run_rctd_doublet <- function(spe, sce_ref, out_prefix) {
   set.seed(9237)
   
@@ -109,7 +144,8 @@ run_rctd_doublet <- function(spe, sce_ref, out_prefix) {
   )
   
   # deconvolution in doublet mode
-  results <- runRctd(rctd_data, rctd_mode = "doublet")
+  results <- runRctd(rctd_data, rctd_mode = "doublet",
+                     confidence_threshold = 2)
 
   pixels <- colnames(assay(results))
   
@@ -136,7 +172,7 @@ for (i in seq_along(nuclei_list)) {
   assayNames(nuclei_list[[i]])[assayNames(nuclei_list[[i]]) == "X"] <- "counts"
 }
 
-for (name in nuclei_list) {
+for (name in names(nuclei_list)) {
     run_rctd_doublet(nuclei_list[[name]], sce_ref, name)
 }
 ```
@@ -166,7 +202,7 @@ saveRDS(subset_list, file = "nuclei_list_ann.rds")
 ```{r}
 for (spe_name in names(nuclei_list)) {
   spe <- nuclei_list[[spe_name]]
-  spe <- spe[,spe$spot_class != "reject" & spe$to_discard == "FALSE"]
+  spe <- spe[, !is.na(spe$spot_class) & spe$spot_class != "reject" & spe$to_discard == "FALSE"]
   print(dim(spe))
   spe$in_tissue <- rep(TRUE,dim(spe)[2])
   stat1 <- plotCoords(spe, annotate = "cell_type", point_size = 0.9,

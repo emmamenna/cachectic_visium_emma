@@ -47,7 +47,6 @@ library(org.Mm.eg.db)
 #parto da c26 vs sham dei nuclei che è il confronto con + DEG
 ```{r}
 pb <- readRDS("~/pb_16bin.rds")
-
 lrt_list <- list()
 summary_list <- list()
 
@@ -354,3 +353,56 @@ x <- as.factor(x)
 png("boxplot.png", width = 800, height = 600, res = 120)
 boxplot(y ~ x)
 ```
+
+#Dotplot
+```{r}
+pb <- readRDS("~/pb_16bin.rds")
+
+pb_musc <- pb[,pb$new_cell_type == "MuSC"]
+pb_musc_rid <- pb_musc[,pb_musc$tissue_type %in% c("sham", "c26", "c26murf1")]
+
+genes <- c("Pax7","Myod1","Myog","Myf6")
+
+expr <- assay(pb_musc_rid, "counts")
+expr_sub <- expr[genes, ]
+df <- as.data.frame(t(expr_sub))
+df$sampletype <- pb_musc_rid$tissue_type
+
+# Long format
+df_long <- df %>%
+  pivot_longer(cols = all_of(genes), 
+               names_to = "gene", 
+               values_to = "expression")
+
+# Summary: media + percentuale espressione
+df_sum <- df_long %>%
+  group_by(sampletype, gene) %>%
+  summarise(
+    avg_exp = mean(expression),
+    pct_exp = mean(expression > 0) * 100,
+    .groups = "drop"
+  )
+
+df_sum <- df_sum %>%
+  mutate(sampletype = factor(sampletype,
+                             levels = c("sham", "c26", "c26murf1")))
+
+p <- ggplot(df_sum, aes(x = sampletype, y = gene)) +
+  geom_point(aes(size = pct_exp, color = avg_exp)) +
+  scale_color_gradient(low = "grey80", high = "red") +
+  theme_minimal() +
+  labs(x = "Sample type", y = "Gene") +
+  theme(
+    panel.grid = element_blank(),
+    axis.line = element_line(color = "black"),  
+    axis.ticks = element_line(color = "black"), 
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    text = element_text(size = 14),
+  )
+ggsave("dotplot_musc.pdf", plot = p,
+       width = 6, height = 4, dpi = 300)
+```
+
+
+
+

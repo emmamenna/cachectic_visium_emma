@@ -1,0 +1,543 @@
+---
+title: "GSEA"
+output: html_document
+date: "2025-10-15"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(SingleCellExperiment)
+library(SummarizedExperiment)
+library(scuttle)
+library(edgeR)
+library(RUVSeq)
+library(scMerge)
+library(clusterProfiler)
+library(enrichplot)
+library(ggplot2)
+library(openxlsx)
+library(dplyr)
+library(stringr)
+library(AnnotationDbi)
+library(pathview)
+library(muscat)
+library(org.Mm.eg.db)
+library(patchwork)
+```
+
+#Objects and functions
+```{r}
+pb <- readRDS("~/pb_16bin.rds")
+
+make_geneList_kegg <- function(logFC_named_by_SYMBOL) {
+  # SYMBOL -> ENTREZ
+  ids <- suppressMessages(
+    bitr(names(logFC_named_by_SYMBOL),
+         fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Mm.eg.db)
+  )
+  v <- logFC_named_by_SYMBOL[ids$SYMBOL]
+  names(v) <- ids$ENTREZID
+  v <- v[!is.na(v) & !is.na(names(v))]
+  sort(v, decreasing = TRUE)
+}
+
+convert_core_enrichment <- function(entrez_string) {
+  entrez_ids <- strsplit(entrez_string, "/")[[1]]
+  symbols <- bitr(entrez_ids, fromType="ENTREZID", 
+                  toType="SYMBOL", OrgDb= org.Mm.eg.db)
+  paste(symbols$SYMBOL, collapse="/")
+}
+
+contrast_list <- list(
+  "C26_vs_SHAM"   = c("tissue_typec26 - tissue_typesham"),
+  "FOXO_vs_C26"   = c("tissue_typec26foxO - tissue_typec26"),
+  "FOXO_vs_SHAM"  = c("tissue_typec26foxO - tissue_typesham"),
+  "STAT3_vs_C26"  = c("tissue_typec26STAT3 - tissue_typec26"),
+  "STAT3_vs_SHAM" = c("tissue_typec26STAT3 - tissue_typesham"),
+  "MURF1_vs_C26"  = c("tissue_typec26murf1 - tissue_typec26"),
+  "MURF1_vs_SHAM" = c("tissue_typec26murf1 - tissue_typesham"),
+  "SMAD23_vs_C26" = c("tissue_typec26SMAD23 - tissue_typec26"),
+  "SMAD23_vs_SHAM"= c("tissue_typec26SMAD23 - tissue_typesham")
+)
+
+```
+
+# TRIM C26 VS 2B SHAM 
+```{r}
+pb_16bin$group <- paste0(pb_16bin$new_cell_type, "_", pb_16bin$tissue_type)
+pb_sub <- pb_16bin[, pb_16bin$group %in% c("Myonuclei_Trim63_c26", "Myonuclei_IIb_sham")]
+pb_sub$group <- factor(pb_sub$group, levels = c("Myonuclei_IIb_sham", "Myonuclei_Trim63_c26"))
+
+y <- DGEList(counts(pb_sub), samples = as.data.frame(colData(pb_sub)))
+keep <- filterByExpr(y, group = y$samples$group)
+y <- y[keep,, keep.lib.sizes=FALSE]
+y <- calcNormFactors(y)
+design <- model.matrix(~ group, data=y$samples)
+y <- estimateDisp(y, design)
+fit <- glmFit(y, design)
+lrt <- glmLRT(fit, coef = 2)
+top <- topTags(lrt, n = Inf)$table
+top$SYMBOL <- rownames(top)
+
+top$significant <- top$FDR < 0.05
+sig <- top[top$significant, ]
+sig_up <- sig[sig$logFC >= 0, ]
+sig_down <- sig[sig$logFC < 0, ]
+  
+gene_summary <- data.frame(
+    Geni_considerati = nrow(top),
+    Geni_significativi = nrow(sig),
+    Upregolati = nrow(sig_up),
+    Downregolati = nrow(sig_down)
+)
+  
+gene_summary
+  
+```
+
+#GSEA TRIM C26 VS 2B SHAM
+```{r}
+se <- SummarizedExperiment(assays = list(counts = y$counts),
+                             colData = y$samples)
+assay(se, "norm") <- cpm(y, log = TRUE, prior.count = 1)
+se$GROUP <- ifelse(se$tissue_type == "c26", 1, 0)
+
+rowData(se)$PVAL     <- top$PValue[match(rownames(se), rownames(top))]
+rowData(se)$FC       <- top$logFC[match(rownames(se), rownames(top))]
+rowData(se)$ADJ.PVAL <- top$FDR[match(rownames(se), rownames(top))]
+rowData(se)$SYMBOL   <- top$SYMBOL[match(rownames(se), rownames(top))]
+
+geneList <- rowData(se)$FC; names(geneList) <- rowData(se)$SYMBOL
+geneList <- geneList[!is.na(geneList) & !is.na(names(geneList))]
+geneList <- make_geneList_kegg(geneList)
+gsea_sig <- gseKEGG(geneList = geneList, organism = "mmu",
+            pvalueCutoff = 0.05, verbose = FALSE, nPermSimple = 10000)
+gsea_sig@result
+gsea_sig@result$core_enrichment_symbols <- 
+  sapply(gsea_sig@result$core_enrichment, convert_core_enrichment)
+
+res_df <- as.data.frame(gsea_sig@result)
+# wb <- createWorkbook()
+# addWorksheet(wb, "GSEA_Results")
+# writeData(wb, sheet = "GSEA_Results", x = res_df, rowNames = TRUE)
+# saveWorkbook(wb, file = "gsea_trim_2b.xlsx", overwrite = TRUE)
+
+```
+
+#DOTPLOT GSEA TRIM C26 VS 2B SHAM
+```{r}
+p <- enrichplot::dotplot(gsea_sig, showCategory = 15, font.size = 8,
+                    title = "Enriched Pathways", split=".sign") + facet_grid(.~.sign)
+ggsave("pathways_trim_2b.pdf", plot = p,
+       width = 8, height = 9, dpi = 300)
+
+#second plot 
+enrich_KEGG <- as.data.frame(gsea_sig@result)
+enrich_KEGG <- enrich_KEGG[order(enrich_KEGG$p.adjust), ]
+enrich_KEGG <- enrich_KEGG[enrich_KEGG$p.adjust < 0.05, ]
+
+enrich_KEGG$Count <- sapply(strsplit(enrich_KEGG$core_enrichment, "/"), length)
+enrich_KEGG$GeneRatio <- enrich_KEGG$Count / enrich_KEGG$setSize
+
+#enrich_KEGG <- head(enrich_KEGG, 35)
+# p2 <- ggplot(enrich_KEGG,
+#                             aes(x = -log10(p.adjust),
+#                                 y = reorder(Description, -log10(p.adjust)),
+#                                 color = GeneRatio,
+#                                 size = Count)) +
+#   geom_point() +
+#   scale_color_gradient(low = "blue", high = "red") +
+#   theme_minimal(base_size = 10) +
+#   ylab("Description") +
+#   xlab("-log10(p.adjust)") +
+#   ggtitle("Top 35 KEGG")
+# 
+# p2
+
+# separa i dati
+enrich_pos <- enrich_KEGG[enrich_KEGG$NES > 0, ]
+enrich_neg <- enrich_KEGG[enrich_KEGG$NES < 0, ]
+
+# grafico positivi
+p_pos <- ggplot(enrich_pos,
+                aes(x = -log10(p.adjust),
+                    y = reorder(Description, -log10(p.adjust)),
+                    color = GeneRatio,
+                    size = Count)) +
+  geom_point() +
+  scale_color_gradient(low = "blue", high = "red") +
+  theme_minimal(base_size = 16) +
+  ylab("Description") +
+  xlab("-log10(p.adjust)") +
+  ggtitle("KEGG Positive Pathways")
+
+ggsave("trim_2b_pos.pdf", plot = p_pos,
+       width = 20, height = 9, dpi = 300)
+
+# grafico negativi
+p_neg <- ggplot(enrich_neg,
+                aes(x = -log10(p.adjust),
+                    y = reorder(Description, -log10(p.adjust)),
+                    color = GeneRatio,
+                    size = Count)) +
+  geom_point() +
+  scale_color_gradient(low = "blue", high = "red") +
+  theme_minimal(base_size = 16) +
+  ylab("Description") +
+  xlab("-log10(p.adjust)") +
+  ggtitle("KEGG Negative Pathways")
+
+ggsave("trim_2b_neg.pdf", plot = p_neg,
+       width = 20, height = 9, dpi = 300)
+
+```
+
+# TRIM C26 VS MYONUCLEI OVERALL SHAM
+```{r}
+pb_16bin$group <- paste0(pb_16bin$new_cell_type, "_", pb_16bin$tissue_type)
+mio_ov_sham <- unique(grep(paste0("^", "Myonuclei", ".*", "sham"), pb_16bin$group, value = TRUE))
+pb_sub <- pb_16bin[, pb_16bin$group %in% c("Myonuclei_Trim63_c26", mio_ov_sham)]
+pb_sub$group[pb_sub$group %in% mio_ov_sham] <- "Myonuclei_sham"
+pb_sub$group <- as.factor(pb_sub$group)
+pb_comb <- aggregateData(pb_sub, assay = "counts", fun = "sum", by = "sample_id")
+colData(pb_comb)$group <- pb_sub$group[match(colnames(pb_comb), pb_sub$sample_id)]
+names(assays(pb_comb)) <- "counts"
+
+y <- DGEList(counts(pb_comb), samples = as.data.frame(colData(pb_comb)))
+keep <- filterByExpr(y, group = y$samples$group)
+y <- y[keep,, keep.lib.sizes=FALSE]
+y <- calcNormFactors(y)
+design <- model.matrix(~ group, data=y$samples)
+y <- estimateDisp(y, design)
+fit <- glmFit(y, design)
+lrt <- glmLRT(fit, coef = 2)
+top <- topTags(lrt, n = Inf)$table
+top$SYMBOL <- rownames(top)
+
+top$significant <- top$FDR < 0.05
+sig <- top[top$significant, ]
+sig_up <- sig[sig$logFC >= 0, ]
+sig_down <- sig[sig$logFC < 0, ]
+
+gene_summary <- data.frame(
+    Geni_considerati = nrow(top),
+    Geni_significativi = nrow(sig),
+    Upregolati = nrow(sig_up),
+    Downregolati = nrow(sig_down)
+)
+  
+gene_summary
+  
+```
+
+#GSEA TRIM C26 VS MYONUCLEI OVERALL SHAM
+```{r}
+se <- SummarizedExperiment(assays = list(counts = y$counts),
+                             colData = y$samples)
+assay(se, "norm") <- cpm(y, log = TRUE, prior.count = 1)
+se$GROUP <- ifelse(se$group == "Myonuclei_Trim63_c26", 1, 0)
+
+rowData(se)$PVAL     <- top$PValue[match(rownames(se), rownames(top))]
+rowData(se)$FC       <- top$logFC[match(rownames(se), rownames(top))]
+rowData(se)$ADJ.PVAL <- top$FDR[match(rownames(se), rownames(top))]
+rowData(se)$SYMBOL   <- top$SYMBOL[match(rownames(se), rownames(top))]
+
+geneList <- rowData(se)$FC; names(geneList) <- rowData(se)$SYMBOL
+geneList <- geneList[!is.na(geneList) & !is.na(names(geneList))]
+geneList <- make_geneList_kegg(geneList)
+
+gsea_sig <- gseKEGG(geneList = geneList, organism = "mmu",
+            pvalueCutoff = 0.05, verbose = FALSE)
+gsea_sig@result
+
+gsea_sig@result$core_enrichment_symbols <- 
+  sapply(gsea_sig@result$core_enrichment, convert_core_enrichment)
+res_df <- as.data.frame(gsea_sig@result)
+
+# wb <- createWorkbook()
+# addWorksheet(wb, "GSEA_Results")
+# writeData(wb, sheet = "GSEA_Results", x = res_df, rowNames = TRUE)
+# saveWorkbook(wb, file = "gsea_trim_overall.xlsx", overwrite = TRUE)
+
+```
+
+#DOTPLOT GSEA TRIM C26 VS MYONUCLEI OVERALL SHAM
+```{r}
+p <- enrichplot::dotplot(gsea_sig, showCategory = 15, font.size = 8,
+                    title = "Enriched Pathways", split=".sign") + facet_grid(.~.sign)
+ggsave("pathways_trim_overall.pdf", plot = p,
+       width = 8, height = 9, dpi = 300)
+
+#second plot 
+enrich_KEGG <- as.data.frame(gsea_sig@result)
+enrich_KEGG <- enrich_KEGG[order(enrich_KEGG$p.adjust), ]
+enrich_KEGG <- enrich_KEGG[enrich_KEGG$p.adjust < 0.05, ]
+
+enrich_KEGG$Count <- sapply(strsplit(enrich_KEGG$core_enrichment, "/"), length)
+enrich_KEGG$GeneRatio <- enrich_KEGG$Count / enrich_KEGG$setSize
+
+#enrich_KEGG <- head(enrich_KEGG, 15)
+# p2 <- ggplot(enrich_KEGG,
+#                             aes(x = -log10(p.adjust),
+#                                 y = reorder(Description, -log10(p.adjust)),
+#                                 color = GeneRatio,
+#                                 size = Count)) +
+#   geom_point() +
+#   scale_color_gradient(low = "blue", high = "red") +
+#   theme_minimal(base_size = 16) +
+#   ylab("Description") +
+#   xlab("-log10(p.adjust)") +
+#   ggtitle("Top 15 KEGG")
+# 
+# p2
+
+enrich_pos <- enrich_KEGG[enrich_KEGG$NES > 0, ]
+enrich_neg <- enrich_KEGG[enrich_KEGG$NES < 0, ]
+
+# grafico positivi
+p_pos <- ggplot(enrich_pos,
+                aes(x = -log10(p.adjust),
+                    y = reorder(Description, -log10(p.adjust)),
+                    color = GeneRatio,
+                    size = Count)) +
+  geom_point() +
+  scale_color_gradient(low = "blue", high = "red") +
+  theme_minimal(base_size = 16) +
+  ylab("Description") +
+  xlab("-log10(p.adjust)") +
+  ggtitle("KEGG Positive Pathways")
+
+ggsave("trim_overall_pos.pdf", plot = p_pos,
+       width = 20, height = 9, dpi = 300)
+
+# grafico negativi
+p_neg <- ggplot(enrich_neg,
+                aes(x = -log10(p.adjust),
+                    y = reorder(Description, -log10(p.adjust)),
+                    color = GeneRatio,
+                    size = Count)) +
+  geom_point() +
+  scale_color_gradient(low = "blue", high = "red") +
+  theme_minimal(base_size = 16) +
+  ylab("Description") +
+  xlab("-log10(p.adjust)") +
+  ggtitle("KEGG Negative Pathways")
+
+ggsave("trim_overall_neg.pdf", plot = p_neg,
+       width = 20, height = 9, dpi = 300)
+
+```
+
+#GSEA ALL CELLTYPES
+```{r message = FALSE, warning = FALSE}
+
+gsea_list <- list()
+
+for (contrast_name in names(contrast_list)){
+  wb <- createWorkbook()
+  gsea_list[[contrast_name]] <- list()
+  
+  for (celltype in unique(pb$new_cell_type)){
+    ct_pb <- pb[, pb$new_cell_type == celltype]
+    y <- DGEList(counts(ct_pb), samples = as.data.frame(colData(ct_pb)))
+    keep <- filterByExpr(y, group = y$samples$tissue_type)
+    y <- y[keep,, keep.lib.sizes=FALSE]
+    y <- calcNormFactors(y, method="TMM")
+    design <- model.matrix(~ 0 + tissue_type, y$samples)
+    y <- estimateDisp(y, design)
+    se <- SummarizedExperiment(assays = list(counts = y$counts),
+                               colData = y$samples)
+    assay(se, "norm") <- cpm(y, log = TRUE, prior.count = 1)
+    fit <- glmFit(y, design)
+    contrast <- makeContrasts(contrasts = contrast_list[[contrast_name]], levels = design)
+    lrt <- glmLRT(fit, contrast = contrast)
+    top <- topTags(lrt, n = Inf)$table
+    top$SYMBOL <- rownames(top)
+    rowData(se)$PVAL     <- top$PValue[match(rownames(se), rownames(top))]
+    rowData(se)$FC       <- top$logFC[match(rownames(se), rownames(top))]
+    rowData(se)$ADJ.PVAL <- top$FDR[match(rownames(se), rownames(top))]
+    rowData(se)$SYMBOL   <- top$SYMBOL[match(rownames(se), rownames(top))]
+    
+    #GSEA
+    geneList <- rowData(se)$FC; names(geneList) <- rowData(se)$SYMBOL
+    geneList <- geneList[!is.na(geneList) & !is.na(names(geneList))]
+    geneList <- make_geneList_kegg(geneList)
+    gsea_sig <- gseKEGG(geneList = geneList, organism = "mmu",
+            pvalueCutoff = 0.05, verbose = FALSE)
+    gsea_list[[contrast_name]][[celltype]] <- gsea_sig
+    
+    # if (!is.null(gsea_sig) && nrow(gsea_sig@result) > 0) {
+    #   gsea_sig@result$core_enrichment_symbols <- 
+    #   sapply(gsea_sig@result$core_enrichment, convert_core_enrichment)
+    #   res_df <- as.data.frame(gsea_sig@result)
+    #   sheet_name <- substr(gsub("[^[:alnum:]]", "_", celltype), 1, 31)
+    #   addWorksheet(wb, sheetName = sheet_name)
+    #   writeData(wb, sheet = sheet_name, res_df)
+    # }
+  }
+  #saveWorkbook(wb, paste0("GSEA_", contrast_name, ".xlsx"), overwrite = TRUE)
+}
+
+```
+
+#DOTPLOT GSEA ALL CELLTYPES
+```{r message = FALSE, warning = FALSE}
+#gsea_sig <- gsea_list$C26_vs_SHAM$Endothelial
+
+for (contrast in names(gsea_list)) {
+  
+  pdf(paste0("GSEA_", contrast, ".pdf"), width = 16, height = 12)
+  
+  for (cell_type in names(gsea_list[[contrast]])) {
+    
+    gsea_sig <- gsea_list[[contrast]][[cell_type]]
+    
+    # skip se vuoto
+    if (is.null(gsea_sig) || nrow(as.data.frame(gsea_sig@result)) == 0) next
+    
+    # --- DOTPLOT ---
+    p1 <- enrichplot::dotplot(
+      gsea_sig,
+      showCategory = 10,
+      font.size = 8,
+      title = paste("Enriched Pathways -", contrast, "-", cell_type),
+      split = ".sign"
+    ) + facet_grid(. ~ .sign)
+    
+    # --- DATA ---
+    enrich_KEGG <- as.data.frame(gsea_sig@result)
+    enrich_KEGG <- enrich_KEGG[order(enrich_KEGG$p.adjust), ]
+    enrich_KEGG <- enrich_KEGG[enrich_KEGG$p.adjust < 0.05, ]
+    
+    if (nrow(enrich_KEGG) == 0) next
+    
+    enrich_KEGG$Count <- sapply(strsplit(enrich_KEGG$core_enrichment, "/"), length)
+    enrich_KEGG$GeneRatio <- enrich_KEGG$Count / enrich_KEGG$setSize
+    
+    enrich_pos <- enrich_KEGG[enrich_KEGG$NES > 0, ]
+    enrich_neg <- enrich_KEGG[enrich_KEGG$NES < 0, ]
+    enrich_pos <- enrich_pos[order(enrich_pos$p.adjust), ][1:min(10, nrow(enrich_pos)), ]
+    enrich_neg <- enrich_neg[order(enrich_neg$p.adjust), ][1:min(10, nrow(enrich_neg)), ]
+
+    # --- POS ---
+    if (nrow(enrich_pos) > 0) {
+      p2 <- ggplot(enrich_pos,
+                   aes(x = -log10(p.adjust),
+                       y = reorder(Description, -log10(p.adjust)),
+                       color = GeneRatio,
+                       size = Count)) +
+        geom_point() +
+        scale_color_gradient(low = "blue", high = "red") +
+        theme_minimal(base_size = 14) +
+        labs(title = paste("KEGG Positive -", cell_type))
+    } else {
+      p2 <- ggplot() + ggtitle("No positive pathways") + theme_void()
+    }
+    
+    # --- NEG ---
+    if (nrow(enrich_neg) > 0) {
+      p3 <- ggplot(enrich_neg,
+                   aes(x = -log10(p.adjust),
+                       y = reorder(Description, -log10(p.adjust)),
+                       color = GeneRatio,
+                       size = Count)) +
+        geom_point() +
+        scale_color_gradient(low = "blue", high = "red") +
+        theme_minimal(base_size = 14) +
+        labs(title = paste("KEGG Negative -", cell_type))
+    } else {
+      p3 <- ggplot() + ggtitle("No negative pathways") + theme_void()
+    }
+    
+    # --- COMBINA ---
+    combined_plot <- (p1 / (p2 | p3))
+    
+    print(combined_plot)  # → nuova pagina nel PDF
+  }
+  
+  dev.off()
+}
+
+```
+
+#GSEA PSEUDOBULK CON SOLI MIONUCLEI
+```{r}
+subset_list <- readRDS("~/bin16_list_ann.rds")
+
+#sample identifiers
+for (nm in names(subset_list)) {
+  spe <- subset_list[[nm]]
+  colData(spe)$sample_id <- rep(nm, ncol(spe))
+  subset_list[[nm]] <- spe
+}
+
+subset_list$c26SMAD23_b2$to_discard <- NULL
+subset_list$c26murf1_b2$to_discard <- NULL
+combined_spe <- do.call(cbind, subset_list)
+combined_myo <- combined_spe[,combined_spe$new_cell_type %in% c("Myonuclei_IIb", "Myonuclei_IIx",
+                                      "Myonuclei_IIx_IIa","Myonuclei_IIx_IIb", "Myonuclei_MTJ",
+                                      "Myonuclei_NMJ", "Myonuclei_Trim63")]
+
+pb <- aggregateAcrossCells(combined_myo, use.assay.type = "counts",  ids=combined_myo$sample_id)
+
+y <- DGEList(counts(pb), samples = colData(pb))
+keep <- filterByExpr(y, group = y$samples$tissue_type)
+y <- y[keep, , keep.lib.sizes = FALSE]
+y <- calcNormFactors(y)
+design <- model.matrix(~ 0 + tissue_type, data = y$samples)
+y <- estimateDisp(y, design)
+fit <- glmFit(y, design)
+se <- SummarizedExperiment(assays = list(counts = y$counts),
+                           colData = y$samples)
+assay(se, "norm") <- cpm(y, log = TRUE, prior.count = 1)
+
+gsea_list <- list()
+
+for (contrast_name in names(contrast_list)) {
+
+  contrast <- makeContrasts(
+    contrasts = contrast_list[[contrast_name]],
+    levels = design
+  )
+
+  lrt <- glmLRT(fit, contrast = contrast)
+  top <- topTags(lrt, n = Inf)$table
+  top$SYMBOL <- rownames(top)
+  top$significant <- top$FDR < 0.05
+
+  rowData(se)$PVAL     <- top$PValue[match(rownames(se), rownames(top))]
+  rowData(se)$FC       <- top$logFC[match(rownames(se), rownames(top))]
+  rowData(se)$ADJ.PVAL <- top$FDR[match(rownames(se), rownames(top))]
+  rowData(se)$SYMBOL   <- top$SYMBOL[match(rownames(se), rownames(top))]
+
+  geneList <- rowData(se)$FC
+  names(geneList) <- rowData(se)$SYMBOL
+  geneList <- geneList[!is.na(geneList) & !is.na(names(geneList))]
+  geneList <- make_geneList_kegg(geneList)
+
+  gsea_sig <- gseKEGG(
+    geneList = geneList,
+    organism = "mmu",
+    pvalueCutoff = 0.05,
+    verbose = FALSE
+  )
+
+  gsea_list[[contrast_name]] <- gsea_sig
+
+  if (!is.null(gsea_sig) && nrow(gsea_sig@result) > 0) {
+    gsea_sig@result$core_enrichment_symbols <-
+      sapply(gsea_sig@result$core_enrichment, convert_core_enrichment)
+    res_df <- as.data.frame(gsea_sig@result)
+    write.xlsx(
+      res_df,
+      file = paste0("GSEA_", contrast_name, ".xlsx"),
+      rowNames = FALSE
+    )
+  }
+}
+```
+
+

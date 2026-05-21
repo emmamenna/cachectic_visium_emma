@@ -207,13 +207,13 @@ for (spe_name in names(subset_list)) {
   ggsave(paste0(spe_name, "_types.png"), final_plot, width = 10, height = 8, dpi = 300)
 
 stat1 <- plotCoords(spe, annotate = "new_cell_type", point_size = 0.5) +
-    scale_color_manual(values = your_color_vector) +
+    scale_color_manual(values = color_vector) +
     theme(
       legend.key.width = unit(0.5, "lines"),
       legend.key.height = unit(1, "lines")
     )
 
-ggsave(paste0(out_prefix, "_dec.png"), stat1, width = 10, height = 8, dpi = 300)
+ggsave(paste0(spe_name,"_dec.png"), stat1, width = 10, height = 8, dpi = 300)
 }
   
 ```
@@ -222,7 +222,7 @@ ggsave(paste0(out_prefix, "_dec.png"), stat1, width = 10, height = 8, dpi = 300)
 ```{r}
 prop_df <- lapply(names(subset_list), function(name) {
   spe <- subset_list[[name]]
-  tab <- table(spe$cell_type)
+  tab <- table(spe$new_cell_type)
   prop <- prop.table(tab)
   data.frame(
     sample = name,
@@ -233,7 +233,7 @@ prop_df <- lapply(names(subset_list), function(name) {
 
 ggplot(prop_df, aes(x = sample, y = proportion, fill = cell_type)) +
   geom_bar(stat = "identity") +
-  scale_fill_manual(values = your_color_vector) +
+  scale_fill_manual(values = color_vector) +
   theme_minimal() +
   labs(
     title = "Proporzioni dei tipi cellulari per campione",
@@ -250,11 +250,10 @@ ggsave("cell_type_proportions.png", width = 10, height = 6, dpi = 300)
 #Barplot to show cell types proportions for each condition
 From this point on block 7 samples won't be considered anymore.
 ```{r}
-list_wb7 <- subset_list[!names(subset_list) %in% c("c26_b7","c26STAT3_b7","sham_b7")]
-prop_df_condition <- lapply(list_wb7, function(spe) {
+prop_df_condition <- lapply(subset_list, function(spe) {
   data.frame(
     tissue_type = unique(spe$tissue_type),
-    cell_type = spe$cell_type
+    cell_type = spe$new_cell_type
   )
 }) |> bind_rows() |> filter(!is.na(cell_type))
 
@@ -266,7 +265,7 @@ prop_df_condition <- prop_df_condition %>%
 
 ggplot(prop_df_condition, aes(x = tissue_type, y = proportion, fill = cell_type)) +
   geom_bar(stat = "identity") +
-  scale_fill_manual(values = your_color_vector) +
+  scale_fill_manual(values = color_vector) +
   theme_minimal() +
   labs(
     title = "Proporzioni dei tipi cellulari per condizione",
@@ -364,12 +363,12 @@ write_xlsx(props_wide, path = "celltype_by_tissue_type.xlsx")
 prop_per_sample <- purrr::imap_dfr(subset_list, function(spe, name) {
   cd <- as.data.frame(SummarizedExperiment::colData(spe))
   cd |>
-    filter(!is.na(cell_type)) |>
-    dplyr::count(cell_type, name = "count") |>
+    filter(!is.na(new_cell_type)) |>
+    dplyr::count(new_cell_type, name = "count") |>
     mutate(proportion  = count / sum(count),
            sample      = name,
            tissue_type = paste(unique(as.character(cd$tissue_type)), collapse = ", ")) |>
-    dplyr::rename(cell_type = cell_type)
+    dplyr::rename(cell_type = new_cell_type)
 })
 ggplot(prop_per_sample, aes(x = tissue_type, y = proportion, fill = tissue_type)) +
   geom_boxplot(outlier.shape = 21) +

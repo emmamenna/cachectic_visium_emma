@@ -41,68 +41,13 @@ biologicalHierarchy <- list(
 
 ```
 
-
-```{r}
-# spe <- nuclei_list_ann$blocco2_c26
-# spe <- nuclei_list_ann$blocco4_c26
-# spe <- nuclei_list_ann$blocco6_c26
-# 
-# spe$celltype_kontextual <- spe$cell_type
-# spe$celltype_kontextual[spe$cell_type %in% biologicalHierarchy$myonuclei] <- "Myonuclei"
-# spe$celltype_kontextual[spe$cell_type == "Myonuclei_Trim63"] <- "Myonuclei_Trim63"
-# spe$celltype_kontextual <- as.factor(spe$celltype_kontextual)
-# table(spe$celltype_kontextual)
-# 
-# #il raggio è nella stessa unità delle coordinate (quindi in um)
-# #perché è una soglia posta sulla distanza euclidea degli spot (che hanno le coordinate in pixel)
-# curves <- kontextCurve(
-#   cells = spe,
-#   from = "Immune_Cells",
-#   to = "Myonuclei_Trim63",
-#   parent = c("Myonuclei_Trim63", "Myonuclei"),
-#   rs = seq(5, 50, 5),
-#   cellType = "celltype_kontextual",
-#   spatialCoords = c("pxl_col_in_fullres", "pxl_row_in_fullres"),
-#   imageID = "sample_id",
-#   #inhom = TRUE
-# )
-# kontextPlot(curves)
-# 
-# curves <- kontextCurve(
-#   cells = spe,
-#   from = "Endothelial",
-#   to = "Myonuclei_Trim63",
-#   parent = c("Myonuclei_Trim63", "Myonuclei"),
-#   rs = seq(10, 100, 10),
-#   cellType = "celltype_kontextual",
-#   spatialCoords = c("pxl_col_in_fullres", "pxl_row_in_fullres"),
-#   imageID = "sample_id",
-#   #inhom = TRUE
-# )
-# kontextPlot(curves)
-# 
-# curves <- kontextCurve(
-#   cells = spe,
-#   from = "FAPs",
-#   to = "Myonuclei_Trim63",
-#   parent = c("Myonuclei_Trim63", "Myonuclei"),
-#   rs = seq(10, 100, 10),
-#   cellType = "celltype_kontextual",
-#   spatialCoords = c("pxl_col_in_fullres", "pxl_row_in_fullres"),
-#   imageID = "sample_id",
-#   #inhom = TRUE
-# )
-# kontextPlot(curves)
-
-```
-
+#Context = all myo
 ```{r}
 # Define samples and cell types
 samples <- c("blocco2_c26", "blocco4_c26", "blocco6_c26")
 
 from_types <- c("Endothelial", "FAPs", "Pericyte", "Smooth_Muscular",
                 "Tenocyte", "MuSC", "Nervous_System", "Immune_Cells")
-dir.create("plots_kontext", showWarnings = FALSE)
 
 # Loop over samples
 for (s in samples) {
@@ -123,14 +68,64 @@ for (s in samples) {
       from = ct,
       to = "Myonuclei_Trim63",
       parent = c("Myonuclei_Trim63", "Myonuclei"),
-      rs = seq(5, 50, 5),
+      rs = seq(30, 160, 10),
       cellType = "celltype_kontextual",
       spatialCoords = c("pxl_col_in_fullres", "pxl_row_in_fullres"),
       imageID = "sample_id"
     )
   
     p <- kontextPlot(curves)
-    filename <- paste0("kontext_", s, "_from_", ct, ".png")
+    filename <- paste0(s, "trim_and_", ct, "_kontext_myo.png")
+    ggsave(filename, plot = p, width = 8, height = 6)
+  }
+}
+```
+
+#Context = myo 2b
+```{r}
+
+biologicalHierarchy <- list(
+  "myonuclei" = c("Myonuclei_MTJ", "Myonuclei_Trim63", "Myonuclei_IIb",
+                  "Myonuclei_IIx_IIb", "Myonuclei_IIx",
+                  "Myonuclei_NMJ", "Myonuclei_IIx_IIa"),
+  "stromal"   = c("Endothelial", "FAPs", "Pericyte", "Smooth_Muscular", "Tenocyte"),
+  "rare"      = c("MuSC", "Nervous_System", "Immune_Cells")
+)
+
+# Define samples and cell types
+samples <- c("blocco2_c26", "blocco4_c26", "blocco6_c26")
+
+from_types <- c("Endothelial", "FAPs", "Pericyte", "Smooth_Muscular",
+                "Tenocyte", "MuSC", "Nervous_System", "Immune_Cells")
+
+# Loop over samples
+for (s in samples) {
+  
+  spe <- nuclei_list_ann[[s]]
+  
+  # Create contextual cell type once
+  spe$celltype_kontextual <- spe$cell_type
+  spe$celltype_kontextual[spe$cell_type %in% biologicalHierarchy$myonuclei] <- "Myonuclei"
+  spe$celltype_kontextual[spe$cell_type == "Myonuclei_IIb"] <- "Myonuclei_IIb"
+  spe$celltype_kontextual[spe$cell_type == "Myonuclei_Trim63"] <- "Myonuclei_Trim63"
+  spe$celltype_kontextual <- as.factor(spe$celltype_kontextual)
+  
+  # Loop over "from" cell types
+  for (ct in from_types) {
+    
+    curves <- kontextCurve(
+      cells = spe,
+      from = ct,
+      to = "Myonuclei_Trim63",
+      parent = c("Myonuclei_Trim63", "Myonuclei_IIb"),
+      rs = seq(30, 160, 10),
+      cellType = "celltype_kontextual",
+      spatialCoords = c("pxl_col_in_fullres", "pxl_row_in_fullres"),
+      imageID = "sample_id"
+    )
+  
+    p <- kontextPlot(curves)
+    filename <- paste0(s, "trim_and_", ct, "_kontext_2b.png")
     ggsave(filename, plot = p, width = 8, height = 6)
   }
 }

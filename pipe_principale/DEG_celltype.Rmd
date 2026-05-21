@@ -40,6 +40,23 @@ library(ggspavis)
 library(openxlsx)
 ```
 
+#Objects
+```{r}
+pb <- readRDS("~/pb_16bin.rds")
+
+contrast_list <- list(
+  "C26_vs_SHAM"   = c("tissue_typec26 - tissue_typesham"),
+  "FOXO_vs_C26"   = c("tissue_typec26foxO - tissue_typec26"),
+  "FOXO_vs_SHAM"  = c("tissue_typec26foxO - tissue_typesham"),
+  "STAT3_vs_C26"  = c("tissue_typec26STAT3 - tissue_typec26"),
+  "STAT3_vs_SHAM" = c("tissue_typec26STAT3 - tissue_typesham"),
+  "MURF1_vs_C26"  = c("tissue_typec26murf1 - tissue_typec26"),
+  "MURF1_vs_SHAM" = c("tissue_typec26murf1 - tissue_typesham"),
+  "SMAD23_vs_C26" = c("tissue_typec26SMAD23 - tissue_typec26"),
+  "SMAD23_vs_SHAM"= c("tissue_typec26SMAD23 - tissue_typesham")
+)
+```
+
 Differentially Expressed Genes analysis: comparing gene expression in the same cell type,
 or in 2 different cell types across conditions.
 
@@ -80,22 +97,9 @@ Note: I kept TMM normalization cause upper-quantile did not work due to the high
 filterByExpr: roughly speaking, the strategy keeps genes that have at least min.count
 reads in a worthwhile number of samples.
 ```{r}
-#pb <- readRDS("~/pb_16bin.rds")
 
 lrt_list <- list()
 summary_list <- list()
-
-contrast_list <- list(
-  "C26_vs_SHAM"   = c("tissue_typec26 - tissue_typesham"),
-  "FOXO_vs_C26"   = c("tissue_typec26foxO - tissue_typec26"),
-  "FOXO_vs_SHAM"  = c("tissue_typec26foxO - tissue_typesham"),
-  "STAT3_vs_C26"  = c("tissue_typec26STAT3 - tissue_typec26"),
-  "STAT3_vs_SHAM" = c("tissue_typec26STAT3 - tissue_typesham"),
-  "MURF1_vs_C26"  = c("tissue_typec26murf1 - tissue_typec26"),
-  "MURF1_vs_SHAM" = c("tissue_typec26murf1 - tissue_typesham"),
-  "SMAD23_vs_C26" = c("tissue_typec26SMAD23 - tissue_typec26"),
-  "SMAD23_vs_SHAM"= c("tissue_typec26SMAD23 - tissue_typesham")
-)
 
 for (contrast_name in names(contrast_list)) {
   lrt_list[[contrast_name]] <- list()
@@ -226,6 +230,7 @@ gene_summary <- data.frame(
 gene_summary
   
 ```
+
 #TRIM C26 VS MYONUCLEI OVERALL SHAM 
 ```{r}
 pb$group <- paste0(pb$new_cell_type, "_", pb$tissue_type)
@@ -275,5 +280,73 @@ gene_summary <- data.frame(
   
 gene_summary
   
+```
+
+#DEG PSEUDOBULK CON SOLI MIONUCLEI
+```{r}
+subset_list <- readRDS("~/bin16_list_ann.rds")
+
+#sample identifiers
+for (nm in names(subset_list)) {
+  spe <- subset_list[[nm]]
+  colData(spe)$sample_id <- rep(nm, ncol(spe))
+  subset_list[[nm]] <- spe
+}
+
+subset_list$c26SMAD23_b2$to_discard <- NULL
+subset_list$c26murf1_b2$to_discard <- NULL
+combined_spe <- do.call(cbind, subset_list)
+combined_myo <- combined_spe[,combined_spe$new_cell_type %in% c("Myonuclei_IIb", "Myonuclei_IIx",
+                                      "Myonuclei_IIx_IIa","Myonuclei_IIx_IIb", "Myonuclei_MTJ",
+                                      "Myonuclei_NMJ", "Myonuclei_Trim63")]
+
+pb <- aggregateAcrossCells(combined_myo, use.assay.type = "counts",  ids=combined_myo$sample_id)
+
+y <- DGEList(counts(pb), samples = colData(pb))
+keep <- filterByExpr(y, group = y$samples$tissue_type)
+y <- y[keep, , keep.lib.sizes = FALSE]
+y <- calcNormFactors(y)
+design <- model.matrix(~ 0 + tissue_type, data = y$samples)
+y <- estimateDisp(y, design)
+fit <- glmFit(y, design)
+
+summary_list <- list()
+
+for (contrast_name in names(contrast_list)){
+  contrast <- makeContrasts(
+    contrasts = contrast_list[[contrast_name]],
+    levels = design
+  )
+
+  lrt <- glmLRT(fit, contrast = contrast)
+  top <- topTags(lrt, n = Inf)$table
+  top$SYMBOL <- rownames(top)
+  top$significant <- top$FDR < 0.05
+  sig <- top[top$significant, ]
+  sig_up <- sig[sig$logFC >= 0, ]
+  sig_down <- sig[sig$logFC < 0, ]
+  wb <- createWorkbook()
+  addWorksheet(wb, "Tutti_geni")
+  writeData(wb, "Tutti_geni", top, rowNames = TRUE)
+  addWorksheet(wb, "Significativi")
+  writeData(wb, "Significativi", sig, rowNames = TRUE)
+  addWorksheet(wb, "Upregolati")
+  writeData(wb, "Upregolati", sig_up, rowNames = TRUE)
+  addWorksheet(wb, "Downregolati")
+  writeData(wb, "Downregolati", sig_down, rowNames = TRUE)
+  file_name <- paste0("DEG_", contrast_name, ".xlsx")
+  saveWorkbook(wb, file_name, overwrite = TRUE)
+  gene_summary <- data.frame(
+    contrast = contrast_name,
+    genes_tested = nrow(top),
+    genes_significant = nrow(sig),
+    upregulated = nrow(sig_up),
+    downregulated = nrow(sig_down)
+  )
+  summary_list[[contrast_name]] <- gene_summary
+}
+
+summary_df <- do.call(rbind, summary_list)
+print(summary_df)
 ```
 
