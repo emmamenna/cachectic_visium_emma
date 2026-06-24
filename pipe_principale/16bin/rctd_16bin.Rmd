@@ -73,6 +73,39 @@ score_cols <- c("Endothelial", "FAPs", "Immune_Cells", "MuSC",
 
 ```
 
+#Exploratory analysis on 16um bins
+```{r}
+
+# Ciclo su tutti i nomi della lista
+for (nm in names(subset_list)) {
+  valore_blocco <- sub(".*_", "", nm)
+  cond <- sub("_.*", "", nm)
+  subset_list[[nm]]$blocco <- valore_blocco
+  subset_list[[nm]]$tissue_type <- cond
+  if ("X" %in% assayNames(subset_list[[nm]])) {
+    assayNames(subset_list[[nm]])[assayNames(subset_list[[nm]]) == "X"] <- "counts"
+  }
+}
+names(subset_list) <- names(subset_list)
+
+estrai_info <- lapply(subset_list, function(spe){
+    n_spot_iniziale <- ncol(spe)
+    total_umi <- sum(colSums(counts(spe)))
+    n_geni <- sum(rowSums(counts(spe)) != 0)
+    data.frame(
+      Condition = unique(spe$tissue_type),
+      Block = unique(spe$blocco),
+      Spot_number = n_spot_iniziale,
+      Total_UMI = total_umi,
+      Detected_genes = n_geni
+    )
+})
+
+tabella_finale <- do.call(rbind, estrai_info)
+#write_xlsx(tabella_finale, path = "expl_analysis_bin16.xlsx")
+
+```
+
 #Deconvolution function
 For each spot the probability for each cell type as well as the label of the principal cell type are saved.
 Three assays (one in full mode):

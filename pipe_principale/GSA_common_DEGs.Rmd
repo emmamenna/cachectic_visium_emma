@@ -64,68 +64,38 @@ do_kegg_for_sheet <- function(gene_vec, sheet_name = NULL) {
 }
 ```
 
-#PER COMMON UP
+#Common degs
 ```{r}
 set.seed(6335)
-excel_path <- "~/up_genes_by_celltype.xlsx"
+excel_path <- "~/common_degs.xlsx"
 sheet_names <- excel_sheets(excel_path)
 results_list <- list()
 for (sheet in sheet_names) {
   message("Processing sheet: ", sheet)
   end_common_up <- read_excel(excel_path, sheet = sheet)
-  symbols <- as.vector(end_common_up$Gene)
+  symbols <- as.vector(end_common_up$Gene_Name)
   res <- do_kegg_for_sheet(symbols)
   results_list[[sheet]] <- res
 }
-write.xlsx(results_list, file = "KEGG_results_by_sheet.xlsx")
+write.xlsx(results_list, file = "GSEA_common.xlsx")
 ```
 
-#PER COMMON DOWN
+#PER UNICI
 ```{r}
 set.seed(6335)
-excel_path <- "~/down_genes_by_celltype.xlsx"
+excel_path <- "~/per_git/genes_unici.xlsx"
 sheet_names <- excel_sheets(excel_path)
 results_list <- list()
 for (sheet in sheet_names) {
   message("Processing sheet: ", sheet)
   end_common_up <- read_excel(excel_path, sheet = sheet)
-  symbols <- as.vector(end_common_up$Gene)
+  symbols <- as.vector(end_common_up$Gene_Name)
   res <- do_kegg_for_sheet(symbols, sheet_name = sheet)
   if(!is.null(res)) results_list[[sheet]] <- res
 }
-write.xlsx(results_list, file = "KEGG_results_by_sheet.xlsx")
+write.xlsx(results_list, file = "GSEA_unici.xlsx")
 ```
 
-#PER UNICI UP
-```{r}
-set.seed(6335)
-excel_path <- "~/up_genes_unici.xlsx"
-sheet_names <- excel_sheets(excel_path)
-results_list <- list()
-for (sheet in sheet_names) {
-  message("Processing sheet: ", sheet)
-  end_common_up <- read_excel(excel_path, sheet = sheet)
-  symbols <- as.vector(end_common_up$Gene)
-  res <- do_kegg_for_sheet(symbols, sheet_name = sheet)
-  if(!is.null(res)) results_list[[sheet]] <- res
-}
-write.xlsx(results_list, file = "GSEA_unici_UP.xlsx")
-```
 
-#PER UNICI DOWN
-```{r}
-set.seed(6335)
-excel_path <- "~/down_genes_unici.xlsx"
-sheet_names <- excel_sheets(excel_path)
-results_list <- list()
-for (sheet in sheet_names) {
-  message("Processing sheet: ", sheet)
-  end_common_up <- read_excel(excel_path, sheet = sheet)
-  symbols <- as.vector(end_common_up$Gene)
-  res <- do_kegg_for_sheet(symbols, sheet_name = sheet)
-  if(!is.null(res)) results_list[[sheet]] <- res
-}
-write.xlsx(results_list, file = "GSEA_unici_DOWN.xlsx")
-```
 
 

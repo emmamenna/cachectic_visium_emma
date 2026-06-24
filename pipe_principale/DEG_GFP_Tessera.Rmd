@@ -52,7 +52,7 @@ combined_spe$in_treatment <- ifelse(combined_spe$in_treatment == 1, "gfp+", "unt
 spe <- combined_spe[, combined_spe$new_cell_type %in% myonuclei_types]
 
 # Add the spatial coordinates into the metadata (convenience)
-colData(spe) <- cbind(colData(spe),spatialCoords(spe))
+colData(spe) <- cbind(colData(spe), spatialCoords(spe))
 
 #fixing non-unique colnames
 colnames(spe) <- paste0(colnames(spe), "_", spe$sample_id)
@@ -171,8 +171,6 @@ TESSERA_data <- TESSERA::prep_data(
 ```
 
 #Run TESSERA
-NB: METTERE IN PARALLELO -> VEDI VIGNETTA!!!
-
 By inspecting the fitted spatial covariance parameters, we can quantify the strength of the spatial dependence for the lattice models via the identifiable parameters gamma_hat or tau2_hat. 
 The MSE results, such as MSE_counts_sample relative to Mean_counts2_sample, facilitate the evaluation of fitted count accuracy on a per-sample basis.
 Finally, the Moran’s I metrics, specifically Moran_residuals, act as a critical diagnostic to ensure that the spatial structure has been adequately captured, indicating that the model has successfully accounted for the spatial dependency in the data.
@@ -189,6 +187,57 @@ TESSERA_out <- TESSERA::TESSERA_lattice(
 print(TESSERA_out$time)
 head(TESSERA_out$performanceSummary, 2)
 head(TESSERA_out$beta_hat)
+```
+
+#Running TESSERA in parallel
+#intanto è con 50 geni
+```{r}
+library(future)
+library(future.apply)
+
+# How many genes to run
+gene_idx_list <- seq(5)
+print(length(gene_idx_list))
+gene_names <- rownames(spe)[gene_idx_list] 
+
+# Setup the backend
+n_workers <- min(length(gene_names), parallel::detectCores() - 2)
+if (.Platform$OS.type == "unix") {
+  future::plan(future::multicore, workers = n_workers)
+} else {
+  future::plan(future::multisession, workers = n_workers)
+}
+
+# Increase memory limit for globals (2GB)
+options(future.globals.maxSize = 2000 * 1024^2) 
+
+t0 <- Sys.time()
+
+# Run future_lapply
+# future.chunk.size = 1 ensures workers don't "batch" these 12-minute tasks.
+TESSERA_results <- future.apply::future_lapply(gene_names, function(g_name) {
+  
+  TESSERA::TESSERA_lattice(
+    TESSERAData_obj = TESSERA_data,
+    gene_name       = g_name,
+    model_type      = "Leroux",
+    em_iters        = 200,
+    em_min_iters    = 15,
+    em_tol          = 1e-3,
+    em_stopping     = "rel_loglike",
+    verbose         = FALSE
+  )
+  
+}, future.seed = TRUE, future.chunk.size = 1)
+
+t1 <- Sys.time()
+
+# Clean up
+future::plan(future::sequential)
+
+cat("Parallel processing of", length(gene_names), "genes took:", 
+    round(difftime(t1, t0, units = "min"), 2), "minutes.\n")
+
 ```
 
 After fitting models to hundreds or thousands of genes, we aim to identify which among them are differentially expressed. 

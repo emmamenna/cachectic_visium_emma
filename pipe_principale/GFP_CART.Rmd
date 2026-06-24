@@ -42,6 +42,7 @@ library(spatialreg)
 library(spdep)
 library(spaMM)
 ```
+
 #objects
 ```{r}
 bin16_list_ann <- readRDS("~/bin16_list_ann.rds")

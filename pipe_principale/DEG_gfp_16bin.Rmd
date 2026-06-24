@@ -41,11 +41,13 @@ library(openxlsx)
 library(spatialreg)
 library(spdep)
 library(spaMM)
+library(scales) 
+library(purrr)
 ```
 
 #objects
 ```{r}
-bin16_list_ann <- readRDS("~/bin16_list_ann.rds")
+bin16_list_ann <- readRDS("~/bin16_list_ann_gfp.rds")
 murf_list <- bin16_list_ann[names(bin16_list_ann) %in%
                                    c("c26murf1_b2", "c26murf1_b3", "c26murf1_b5", "c26murf1_b9")]
 fox0_list <- bin16_list_ann[names(bin16_list_ann) %in%
@@ -55,6 +57,12 @@ smad_list <- bin16_list_ann[names(bin16_list_ann) %in%
 
 murf_list$c26murf1_b2$to_discard <- NULL
 smad_list$c26SMAD23_b2$to_discard <- NULL
+murf_list$c26murf1_b3$gfp_value <- NULL
+murf_list$c26murf1_b5$gfp_value <- NULL
+murf_list$c26murf1_b9$gfp_value <- NULL
+smad_list$c26SMAD23_b4$gfp_value <- NULL
+smad_list$c26SMAD23_b5$gfp_value <- NULL
+smad_list$c26SMAD23_b9$gfp_value <- NULL
 murf_list$c26murf1_b2$in_treatment <- ifelse(murf_list$c26murf1_b2$in_treatment == TRUE, 1, 0)
 smad_list$c26SMAD23_b2$in_treatment <- ifelse(smad_list$c26SMAD23_b2$in_treatment == TRUE, 1, 0)
 
@@ -106,7 +114,7 @@ run_de_analysis <- function(pb, fdr_threshold = 0.05, output_file = NULL) {
 
   y <- DGEList(counts(pb), samples = colData(pb))
   
-  # Filter by expression
+  #Filter by expression
   keep <- filterByExpr(y, group = y$samples$in_treatment)
   y <- y[keep, , keep.lib.sizes = FALSE]
   
@@ -170,32 +178,58 @@ run_de_analysis <- function(pb, fdr_threshold = 0.05, output_file = NULL) {
 }
 ```
 
+#filtraggio geni
+```{r}
+# for (nm in names(murf_list)) {
+#     spe <- murf_list[[nm]]
+#     colData(spe)$sample_id <- rep(nm, ncol(spe))
+#     murf_list[[nm]] <- spe
+# }
+# combined_spe <- do.call(cbind, murf_list)
+# filtered_spe <- combined_spe[, combined_spe$new_cell_type %in% myonuclei_types]
+# enough <- counts(filtered_spe) > 0
+# keep_murf <- rowSums(enough) > 1000
+# table(keep_murf) #2345
+# 
+# for (nm in names(fox0_list)) {
+#     spe <- fox0_list[[nm]]
+#     colData(spe)$sample_id <- rep(nm, ncol(spe))
+#     fox0_list[[nm]] <- spe
+# }
+# combined_spe <- do.call(cbind, fox0_list)
+# filtered_spe <- combined_spe[, combined_spe$new_cell_type %in% myonuclei_types]
+# enough <- counts(filtered_spe) > 0
+# keep_fox0 <- rowSums(enough) > 1000
+# table(keep_fox0) #2891
+# 
+# for (nm in names(smad_list)) {
+#     spe <- smad_list[[nm]]
+#     colData(spe)$sample_id <- rep(nm, ncol(spe))
+#     smad_list[[nm]] <- spe
+# }
+# combined_spe <- do.call(cbind, smad_list)
+# filtered_spe <- combined_spe[, combined_spe$new_cell_type %in% myonuclei_types]
+# enough <- counts(filtered_spe) > 0
+# keep_smad <- rowSums(enough) > 1000
+# table(keep_smad) #2499
+
+```
+
+
 #running the code for the three conditions
 ```{r}
 pb_murf <- prepare_pseudobulk(murf_list, myonuclei_types)
+#pb_murf <- pb_murf[keep_murf,]
 de_results <- run_de_analysis(pb_murf, output_file = "myo_murf_gfp_DEGs.xlsx")
 
 pb_fox0 <- prepare_pseudobulk(fox0_list, myonuclei_types)
+#pb_fox0 <- pb_fox0[keep_fox0,]
 de_results <- run_de_analysis(pb_fox0, output_file = "myo_fox0_gfp_DEGs.xlsx")
 #NO SIG
 
 pb_smad <- prepare_pseudobulk(smad_list, myonuclei_types)
+#pb_smad <- pb_smad[keep_smad,]
 de_results <- run_de_analysis(pb_smad, output_file = "myo_smad_gfp_DEGs.xlsx")
-```
-
-```{r}
-# geni_da_cercare <- c("FoxO6", "Gm41696", "Coq6", "Nkx1-1", "Gm32854", "Gm31536", "Gm46659",
-#                      "Lrrk2", "Abca6", "Diras1")
-# 
-# geni_da_cercare %in% rownames(sig_up)
-# geni_da_cercare %in% rownames(sig_down)
-# #Coq6 è downregolato nei trattati
-# 
-# geni2 <- c("Gm39576", "Gm39920", "Sh2d4b", "Gm36830", "Exoc6b", "Gm35515", "Gm32432",
-#            "Camta2", "Fmo4", "Gcnt3")
-# geni2 %in% rownames(sig_up)
-# geni2 %in% rownames(sig_down)
-
 ```
 
 #Plotting gfp
@@ -250,4 +284,24 @@ fox0_list <- save_treatment_plots(fox0_list, "fox0")
 murf_list <- save_treatment_plots(murf_list, "murf")
 smad_list <- save_treatment_plots(smad_list, "smad")
 ```
+
+#Plotting gfp value
+```{r}
+bin16_list_ann_gfp <- readRDS("~/bin16_list_ann_gfp.rds")
+spe <- bin16_list_ann_gfp$c26foxO_b1
+
+lapply()
+plotCoords(spe, annotate = "gfp_value", )
+
+# Itera sugli oggetti SpatialExperiment presenti nella lista
+lista_grafici <- lapply(smad_list, function(spe_elem) {
+  plotCoords(spe_elem, annotate = "gfp_value") +
+    scale_color_gradient(low = "#e5f5e0", high = "#006d2c") # Gradiente dal verde chiaro al verde scuro
+})
+
+#GFP VALUE SU BLOCCO2 MISSING
+
+
+```
+
 

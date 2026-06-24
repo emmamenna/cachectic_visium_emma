@@ -1,0 +1,103 @@
+---
+title: "DEG_gfp_sample_specific"
+output: html_document
+date: "2026-06-17"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(edgeR)
+library(dplyr)
+library(purrr)
+library(openxlsx)
+library(SpatialExperiment)
+library(SingleCellExperiment)
+```
+
+```{r}
+bin16_list_ann <- readRDS("~/bin16_list_ann_gfp.rds")
+
+treated_samples <- bin16_list_ann[names(bin16_list_ann) %in% c("c26murf1_b2", "c26murf1_b3", "c26murf1_b5", "c26murf1_b9", "c26foxO_b1","c26foxO_b4","c26foxO_b6","c26foxO_b9", "c26SMAD23_b2","c26SMAD23_b4","c26SMAD23_b5","c26SMAD23_b9")]
+
+treated_samples$c26murf1_b2$in_treatment <- ifelse(treated_samples$c26murf1_b2$in_treatment == TRUE, 1, 0)
+treated_samples$c26SMAD23_b2$in_treatment <- ifelse(treated_samples$c26SMAD23_b2$in_treatment == TRUE, 1, 0)
+
+cell_types <- c("Myonuclei_IIb", "Myonuclei_IIx",
+                     "Myonuclei_IIx_IIa", "Myonuclei_IIx_IIb",
+                     "Myonuclei_MTJ", "Myonuclei_NMJ", "Myonuclei_Trim63")
+
+```
+
+```{r}
+treated_samples <- lapply(treated_samples, function(spe) {
+  spe$in_treatment <- ifelse(spe$in_treatment == 1, "gfp+", "untreated")
+  spe <- spe[, spe$new_cell_type %in% cell_types]
+  return(spe)
+})
+```
+
+#function for edgeR analysis
+```{r}
+run_edgeR_pipeline <- function(spe, sample_name, output_dir = "./") {
+  cat("\n--- Processing Sample:", sample_name, "---\n")
+  
+  y <- DGEList(counts = counts(spe), samples = as.data.frame(colData(spe)))
+  keep <- rowSums(counts(spe) > 0) > 1000
+  if (sum(keep) == 0) {
+    warning(paste("No genes passed filtering for sample", sample_name))
+    return(NULL)
+  }
+  y <- y[keep, , keep.lib.sizes = FALSE]
+  y <- calcNormFactors(y)
+  y$samples$in_treatment <- as.factor(y$samples$in_treatment)
+  y$samples$in_treatment <- relevel(y$samples$in_treatment, ref = "untreated")
+  design <- model.matrix(~ in_treatment, data = y$samples)
+  y <- estimateDisp(y, design)
+  fit <- glmFit(y, design)
+  lrt <- glmLRT(fit, coef = "in_treatmentgfp+")
+
+  res <- topTags(lrt, n = Inf)$table
+  res$SYMBOL <- rownames(res)
+  res$significant <- res$FDR < 0.05
+  
+  sig <- res[res$significant, ]
+  sig_up <- sig[sig$logFC >= 0, ]
+  sig_down <- sig[sig$logFC < 0, ]
+  
+  gene_summary <- data.frame(
+    Geni_considerati = nrow(res),
+    Geni_significativi = nrow(sig),
+    Upregolati = nrow(sig_up),
+    Downregolati = nrow(sig_down)
+  )
+  print(gene_summary)
+
+  output_file <- file.path(output_dir, paste0("edgeR_results_", sample_name, ".xlsx"))
+  wb <- createWorkbook()
+  addWorksheet(wb, "Tutti_geni")
+  writeData(wb, "Tutti_geni", res, rowNames = TRUE)
+  addWorksheet(wb, "Significativi")
+  writeData(wb, "Significativi", sig, rowNames = TRUE)
+  addWorksheet(wb, "Upregolati")
+  writeData(wb, "Upregolati", sig_up, rowNames = TRUE)
+  addWorksheet(wb, "Downregolati")
+  writeData(wb, "Downregolati", sig_down, rowNames = TRUE)
+  saveWorkbook(wb, output_file, overwrite = TRUE)
+  cat("Results saved to:", output_file, "\n")
+  
+  return(res)
+}
+
+```
+
+```{r}
+results_list <- iwalk(treated_samples, ~ run_edgeR_pipeline(spe = .x, sample_name = .y))
+```
+
+
+
+
+

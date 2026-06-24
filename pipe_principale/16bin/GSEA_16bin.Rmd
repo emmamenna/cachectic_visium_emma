@@ -53,22 +53,16 @@ convert_core_enrichment <- function(entrez_string) {
 
 contrast_list <- list(
   "C26_vs_SHAM"   = c("tissue_typec26 - tissue_typesham"),
-  "FOXO_vs_C26"   = c("tissue_typec26foxO - tissue_typec26"),
-  "FOXO_vs_SHAM"  = c("tissue_typec26foxO - tissue_typesham"),
   "STAT3_vs_C26"  = c("tissue_typec26STAT3 - tissue_typec26"),
-  "STAT3_vs_SHAM" = c("tissue_typec26STAT3 - tissue_typesham"),
-  "MURF1_vs_C26"  = c("tissue_typec26murf1 - tissue_typec26"),
-  "MURF1_vs_SHAM" = c("tissue_typec26murf1 - tissue_typesham"),
-  "SMAD23_vs_C26" = c("tissue_typec26SMAD23 - tissue_typec26"),
-  "SMAD23_vs_SHAM"= c("tissue_typec26SMAD23 - tissue_typesham")
+  "STAT3_vs_SHAM" = c("tissue_typec26STAT3 - tissue_typesham")
 )
 
 ```
 
 # TRIM C26 VS 2B SHAM 
 ```{r}
-pb_16bin$group <- paste0(pb_16bin$new_cell_type, "_", pb_16bin$tissue_type)
-pb_sub <- pb_16bin[, pb_16bin$group %in% c("Myonuclei_Trim63_c26", "Myonuclei_IIb_sham")]
+pb$group <- paste0(pb$new_cell_type, "_", pb$tissue_type)
+pb_sub <- pb[, pb$group %in% c("Myonuclei_Trim63_c26", "Myonuclei_IIb_sham")]
 pb_sub$group <- factor(pb_sub$group, levels = c("Myonuclei_IIb_sham", "Myonuclei_Trim63_c26"))
 
 y <- DGEList(counts(pb_sub), samples = as.data.frame(colData(pb_sub)))
@@ -120,11 +114,23 @@ gsea_sig@result$core_enrichment_symbols <-
   sapply(gsea_sig@result$core_enrichment, convert_core_enrichment)
 
 res_df <- as.data.frame(gsea_sig@result)
+
+res_df 
 # wb <- createWorkbook()
 # addWorksheet(wb, "GSEA_Results")
 # writeData(wb, sheet = "GSEA_Results", x = res_df, rowNames = TRUE)
 # saveWorkbook(wb, file = "gsea_trim_2b.xlsx", overwrite = TRUE)
 
+```
+
+#subset pathways interessanti
+```{r}
+ pathways <- c("mmu04260", "mmu00190", "mmu04261", "mmu04714", "mmu04713",
+  "mmu04020", "mmu04310", "mmu04820", "mmu05208", "mmu04140",
+  "mmu04141", "mmu04210", "mmu03008", "mmu04668", "mmu04115",
+  "mmu04064", "mmu03050", "mmu04610")
+
+gsea_sig@result <- gsea_sig@result[gsea_sig@result$ID %in% pathways,]
 ```
 
 #DOTPLOT GSEA TRIM C26 VS 2B SHAM
@@ -197,9 +203,9 @@ ggsave("trim_2b_neg.pdf", plot = p_neg,
 
 # TRIM C26 VS MYONUCLEI OVERALL SHAM
 ```{r}
-pb_16bin$group <- paste0(pb_16bin$new_cell_type, "_", pb_16bin$tissue_type)
-mio_ov_sham <- unique(grep(paste0("^", "Myonuclei", ".*", "sham"), pb_16bin$group, value = TRUE))
-pb_sub <- pb_16bin[, pb_16bin$group %in% c("Myonuclei_Trim63_c26", mio_ov_sham)]
+pb$group <- paste0(pb$new_cell_type, "_", pb$tissue_type)
+mio_ov_sham <- unique(grep(paste0("^", "Myonuclei", ".*", "sham"), pb$group, value = TRUE))
+pb_sub <- pb[, pb$group %in% c("Myonuclei_Trim63_c26", mio_ov_sham)]
 pb_sub$group[pb_sub$group %in% mio_ov_sham] <- "Myonuclei_sham"
 pb_sub$group <- as.factor(pb_sub$group)
 pb_comb <- aggregateData(pb_sub, assay = "counts", fun = "sum", by = "sample_id")
@@ -264,9 +270,21 @@ res_df <- as.data.frame(gsea_sig@result)
 
 ```
 
+#subset pathways interessanti
+```{r}
+pathways_trim_overall <- c("mmu03050", "mmu04061", "mmu04610", "mmu03060", "mmu03008",
+  "mmu04140", "mmu04141", "mmu04064", "mmu04137", "mmu04210",
+  "mmu03040", "mmu04142", "mmu04360", "mmu04024", "mmu04371",
+  "mmu04022", "mmu04020", "mmu04814", "mmu04261", "mmu04820",
+  "mmu04512", "mmu00760", "mmu04714", "mmu04976", "mmu00020",
+  "mmu00190", "mmu04260")
+
+gsea_sig@result <- gsea_sig@result[gsea_sig@result$ID %in% pathways_trim_overall,]
+```
+
 #DOTPLOT GSEA TRIM C26 VS MYONUCLEI OVERALL SHAM
 ```{r}
-p <- enrichplot::dotplot(gsea_sig, showCategory = 15, font.size = 8,
+p <- enrichplot::dotplot(gsea_sig, showCategory = 50, font.size = 8,
                     title = "Enriched Pathways", split=".sign") + facet_grid(.~.sign)
 ggsave("pathways_trim_overall.pdf", plot = p,
        width = 8, height = 9, dpi = 300)
@@ -383,6 +401,75 @@ for (contrast_name in names(contrast_list)){
 
 ```
 
+#SUBSET FOR THE PLOT
+```{r}
+end_c26_sham <- c("mmu00190", "mmu04714", "mmu01100", "mmu04610", "mmu00020", 
+              "mmu04020", "mmu01200", "mmu04060", "mmu03050", "mmu04064", 
+              "mmu00010", "mmu04061", "mmu00270", "mmu04210", "mmu04925", 
+              "mmu04657", "mmu01230", "mmu04630")
+
+faps_c26_sham <- c(
+  "mmu00190", "mmu04714", "mmu04610", "mmu04020", "mmu00020",
+  "mmu04060", "mmu03050", "mmu01200", "mmu04911", "mmu04064",
+  "mmu04512", "mmu04510", "mmu00260", "mmu04024", "mmu04613",
+  "mmu04623", "mmu04022", "mmu00010", "mmu04630", "mmu04750",
+  "mmu04925", "mmu01230", "mmu04518", "mmu04142", "mmu04657",
+  "mmu04672", "mmu04540", "mmu01210"
+)
+
+myo2b_c26_sham <- c("mmu03050", "mmu04142", "mmu04137", "mmu04140", "mmu04210",
+  "mmu04657", "mmu04066", "mmu04610", "mmu04714", "mmu04510",
+  "mmu04820", "mmu04020", "mmu00190", "mmu04260", "mmu04512",
+  "mmu04360", "mmu04022", "mmu04810", "mmu04750", "mmu04024",
+  "mmu04015", "mmu04518", "mmu04517", "mmu04010", "mmu04725")
+  
+myo2x2a_c26_sham <- c("mmu04714", "mmu03050", "mmu04610", "mmu04141", "mmu04820",
+  "mmu00190", "mmu04260", "mmu04723", "mmu04814", "mmu05169",
+  "mmu05171", "mmu05415", "mmu04142", "mmu04020", "mmu04145",
+  "mmu04971", "mmu04022", "mmu03060", "mmu04380", "mmu05208",
+  "mmu00480", "mmu04015")
+
+myo2x_c26_sham <- c("mmu03050", "mmu04610", "mmu04141", "mmu03008", "mmu00480",
+  "mmu04657", "mmu04820", "mmu04714", "mmu04261", "mmu04020",
+  "mmu04510", "mmu04371", "mmu04512", "mmu04022", "mmu04750",
+  "mmu04919", "mmu04310", "mmu00190", "mmu04814", "mmu04024",
+  "mmu04658")
+
+myo2x2b_c26_sham <- c("mmu04714", "mmu04820", "mmu04261", "mmu00190", "mmu04020",
+  "mmu04814", "mmu04610", "mmu03050", "mmu04141", "mmu04142",
+  "mmu04060", "mmu03008", "mmu04657", "mmu04140", "mmu04979",
+  "mmu04920", "mmu04613")
+
+myomtj_c26_sham <- c("mmu04714", "mmu00190", "mmu04723", "mmu04020", "mmu01100",
+  "mmu04022", "mmu04261", "mmu04510", "mmu00480", "mmu04142",
+  "mmu03050", "mmu04210", "mmu03008", "mmu00020")
+
+trim_c26_sham <- 
+  c("mmu03050", "mmu00190", "mmu01200", "mmu04137", "mmu04714",
+  "mmu00020", "mmu00280", "mmu01210", "mmu00640", "mmu00620",
+  "mmu04140", "mmu04152", "mmu00071", "mmu04066", "mmu03015",
+  "mmu03040", "mmu03320", "mmu04068", "mmu04120", "mmu00630",
+  "mmu01230", "mmu04218", "mmu01212", "mmu00380", "mmu04514",
+  "mmu04061")
+
+mappatura <- list(
+  Endothelial       = end_c26_sham,
+  FAPs              = faps_c26_sham,
+  Myonuclei_IIb     = myo2b_c26_sham,
+  Myonuclei_IIx_IIa = myo2x2a_c26_sham,
+  Myonuclei_IIx     = myo2x_c26_sham,
+  Myonuclei_IIx_IIb = myo2x2b_c26_sham,
+  Myonuclei_MTJ     = myomtj_c26_sham,
+  Myonuclei_Trim63  = trim_c26_sham
+)
+
+for (cluster in names(mappatura)) {
+  ids <- mappatura[[cluster]]
+  gsea_list$C26_vs_SHAM[[cluster]]@result <- subset(gsea_list$C26_vs_SHAM[[cluster]]@result, ID %in% ids)
+}
+
+```
+
 #DOTPLOT GSEA ALL CELLTYPES
 ```{r message = FALSE, warning = FALSE}
 #gsea_sig <- gsea_list$C26_vs_SHAM$Endothelial
@@ -401,7 +488,7 @@ for (contrast in names(gsea_list)) {
     # --- DOTPLOT ---
     p1 <- enrichplot::dotplot(
       gsea_sig,
-      showCategory = 10,
+      showCategory = 30,
       font.size = 8,
       title = paste("Enriched Pathways -", contrast, "-", cell_type),
       split = ".sign"
@@ -419,8 +506,8 @@ for (contrast in names(gsea_list)) {
     
     enrich_pos <- enrich_KEGG[enrich_KEGG$NES > 0, ]
     enrich_neg <- enrich_KEGG[enrich_KEGG$NES < 0, ]
-    enrich_pos <- enrich_pos[order(enrich_pos$p.adjust), ][1:min(10, nrow(enrich_pos)), ]
-    enrich_neg <- enrich_neg[order(enrich_neg$p.adjust), ][1:min(10, nrow(enrich_neg)), ]
+    enrich_pos <- enrich_pos[order(enrich_pos$p.adjust), ][1:min(20, nrow(enrich_pos)), ]
+    enrich_neg <- enrich_neg[order(enrich_neg$p.adjust), ][1:min(20, nrow(enrich_neg)), ]
 
     # --- POS ---
     if (nrow(enrich_pos) > 0) {
@@ -464,7 +551,7 @@ for (contrast in names(gsea_list)) {
 ```
 
 #GSEA PSEUDOBULK CON SOLI MIONUCLEI
-```{r}
+```{r message = FALSE, warning = FALSE}
 subset_list <- readRDS("~/bin16_list_ann.rds")
 
 #sample identifiers
@@ -527,17 +614,81 @@ for (contrast_name in names(contrast_list)) {
 
   gsea_list[[contrast_name]] <- gsea_sig
 
-  if (!is.null(gsea_sig) && nrow(gsea_sig@result) > 0) {
-    gsea_sig@result$core_enrichment_symbols <-
-      sapply(gsea_sig@result$core_enrichment, convert_core_enrichment)
-    res_df <- as.data.frame(gsea_sig@result)
-    write.xlsx(
-      res_df,
-      file = paste0("GSEA_", contrast_name, ".xlsx"),
-      rowNames = FALSE
-    )
-  }
+  # if (!is.null(gsea_sig) && nrow(gsea_sig@result) > 0) {
+  #   gsea_sig@result$core_enrichment_symbols <-
+  #     sapply(gsea_sig@result$core_enrichment, convert_core_enrichment)
+  #   res_df <- as.data.frame(gsea_sig@result)
+  #   write.xlsx(
+  #     res_df,
+  #     file = paste0("GSEA_", contrast_name, ".xlsx"),
+  #     rowNames = FALSE
+  #   )
+  # }
 }
+```
+
+#subset pathways myo
+```{r}
+pathways_myo <- c("mmu04714", "mmu00190", "mmu04820", "mmu04261", "mmu04022",
+  "mmu04360", "mmu04371", "mmu04725", "mmu04062", "mmu04510",
+  "mmu04919", "mmu03050", "mmu04610", "mmu04141", "mmu04140",
+  "mmu04142", "mmu04210", "mmu03008", "mmu04657", "mmu04064",
+  "mmu04979", "mmu04066", "mmu04630")
+
+gsea_myo <- gsea_list$C26_vs_SHAM
+gsea_myo@result <- gsea_list$C26_vs_SHAM@result[gsea_list$C26_vs_SHAM@result$ID %in% pathways_myo,]
+```
+
+#DOTPLOT GSEA MYO (only for c26 vs sham)
+```{r}
+p <- enrichplot::dotplot(gsea_myo, showCategory = 15, font.size = 8,
+                    title = "Enriched Pathways", split=".sign") + facet_grid(.~.sign)
+ggsave("pathways_myo.pdf", plot = p,
+       width = 8, height = 9, dpi = 300)
+
+#second plot 
+enrich_KEGG <- as.data.frame(gsea_myo@result)
+enrich_KEGG <- enrich_KEGG[order(enrich_KEGG$p.adjust), ]
+enrich_KEGG <- enrich_KEGG[enrich_KEGG$p.adjust < 0.05, ]
+
+enrich_KEGG$Count <- sapply(strsplit(enrich_KEGG$core_enrichment, "/"), length)
+enrich_KEGG$GeneRatio <- enrich_KEGG$Count / enrich_KEGG$setSize
+
+enrich_pos <- enrich_KEGG[enrich_KEGG$NES > 0, ]
+enrich_neg <- enrich_KEGG[enrich_KEGG$NES < 0, ]
+
+# grafico positivi
+p_pos <- ggplot(enrich_pos,
+                aes(x = -log10(p.adjust),
+                    y = reorder(Description, -log10(p.adjust)),
+                    color = GeneRatio,
+                    size = Count)) +
+  geom_point() +
+  scale_color_gradient(low = "blue", high = "red") +
+  theme_minimal(base_size = 16) +
+  ylab("Description") +
+  xlab("-log10(p.adjust)") +
+  ggtitle("KEGG Positive Pathways")
+
+ggsave("trim_overall_pos.pdf", plot = p_pos,
+       width = 20, height = 9, dpi = 300)
+
+# grafico negativi
+p_neg <- ggplot(enrich_neg,
+                aes(x = -log10(p.adjust),
+                    y = reorder(Description, -log10(p.adjust)),
+                    color = GeneRatio,
+                    size = Count)) +
+  geom_point() +
+  scale_color_gradient(low = "blue", high = "red") +
+  theme_minimal(base_size = 16) +
+  ylab("Description") +
+  xlab("-log10(p.adjust)") +
+  ggtitle("KEGG Negative Pathways")
+
+ggsave("trim_overall_neg.pdf", plot = p_neg,
+       width = 20, height = 9, dpi = 300)
+
 ```
 
 
