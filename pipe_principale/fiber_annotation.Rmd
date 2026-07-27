@@ -1,0 +1,106 @@
+---
+title: "fiber_annotation"
+output: html_document
+date: "2026-07-13"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(arrow)
+library(Banksy)
+library(BiocParallel)
+library(DropletUtils)
+library(dplyr)
+library(edgeR)
+library(ggplot2)
+library(graphics)
+library(igraph)
+library(jsonlite)
+library(Matrix)
+library(OSTA.data)
+library(patchwork)
+library(pheatmap)
+library(S4Vectors)
+library(scDblFinder)
+library(scater)
+library(scran)
+library(scuttle)
+library(SingleCellExperiment)
+library(SpatialExperiment)
+library(SummarizedExperiment)
+library(tidyr)
+library(VisiumIO)
+library(spacexr)
+library(SpotSweeper)
+library(ggspavis)
+library(writexl)
+library(lme4)
+library(purrr)
+```
+
+```{r}
+blocco1_c26foxO_fibre <- readRDS("~/data/blocco1_c26foxO_fibre.rds")
+sce_ref <- readRDS("~/data/multiome_sce.rds")
+
+color_vector <- c(
+    "Endothelial" = "#0072B2",       # blu vivo
+    "FAPs" = "#009E73",              # verde vivo
+    "Immune_Cells" = "#D55E00",      # arancione-rosso
+    "MuSC" = "#E69F00",              # arancione
+    "Myonuclei_IIb" = "#CC79A7",     # magenta
+    "Myonuclei_IIx" = "#56B4E9",     # azzurro chiaro
+    "Myonuclei_IIx_IIa" = "#F0E442", # giallo
+    "Myonuclei_IIx_IIb" = "#9B59B6", # viola chiaro
+    "Myonuclei_MTJ" = "#0099B4",     # turchese
+    "Myonuclei_NMJ" = "#DDAA33",     # senape
+    "Myonuclei_Trim63" = "#CC3311",  # rosso scuro
+    "Nervous_System" = "#44AA99",    # verde acqua
+    "Pericyte" = "#AA4499",          # viola/rosa
+    "Smooth_Muscular" = "#332288",   # blu-viola scuro
+    "Tenocyte" = "#A3E635"           # verde lime
+)
+```
+
+```{r}
+run_rctd_doublet <- function(spe, sce_ref, out_prefix) {
+  set.seed(9237)
+
+  # data preparation
+  rctd_data <- createRctd(
+    spatial_experiment = spe,
+    reference_experiment = sce_ref,
+    cell_type_col = "subclusters",
+    UMI_min = 10,
+    UMI_min_sigma = 50,
+  )
+
+  # deconvolution in doublet mode
+  results <- runRctd(rctd_data, rctd_mode = "doublet")
+
+  pixels <- colnames(assay(results))
+
+  first_type_map  <- setNames(colData(results)$first_type, pixels)
+  second_type_map <- setNames(colData(results)$second_type, pixels)
+  class_map       <- setNames(colData(results)$spot_class, pixels)
+
+  spe$cell_type   <- first_type_map[as.character(spe$cell_id)]
+  spe$second_type <- second_type_map[as.character(spe$cell_id)]
+  spe$spot_class  <- class_map[as.character(spe$cell_id)]
+
+  print(table(spe$spot_class, useNA = "ifany"))
+
+  #assign("nuclei_list", replace(nuclei_list, out_prefix, spe), envir = .GlobalEnv)
+  return(spe)
+
+  #invisible(spe)
+}
+```
+
+```{r}
+blocco1_c26foxO_fibre <- run_rctd_doublet(blocco1_c26foxO_fibre, sce_ref, "c26_fox0")
+```
+
+

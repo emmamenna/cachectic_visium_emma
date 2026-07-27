@@ -1,0 +1,151 @@
+---
+title: "dotplot_id_markers"
+output: html_document
+date: "2026-03-30"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#libraries
+```{r, include = FALSE}
+library(readxl)
+library(tidyverse)
+library(SummarizedExperiment)
+library(dplyr)
+library(tidyr)
+library(Matrix)
+library(ggplot2)
+```
+
+#data
+```{r}
+# markers <- read.table("~/geni_identita.txt")
+# markers <- as.vector(unlist(markers))
+# genes_myo <- c("Ttn","Myh4","Myh1","Myh2","Col22a1","Ache","Etv5","Trim63")
+# other_genes <- c("Ttn","Pdgfra","Dcn","Myh11","Trpc3","Cacna1c","Col11a1","Mkx","Col1a1","Ptprc",
+#               "F13a1","Itgam","Pax7","Kcna1","Matn2","Mbp","Mpz","Prx","Cadm1","Reln","Mmrn1",
+#               "Pecam1","Kdr")
+
+genes_axone_guidance <- c("Sema6a", "Sema6b", "Sema3f", "Sema3a", "Sema4g", "Sema3e", "Sema4f", "Sema3c",
+                          "Sema4a", "Sema7a", "Sema4b", "Sema5a", "Sema4c", "Sema5b", "Sema6d", "Sema4d",
+                          "Sema6c", "Nrp1", "Nrp2", "Plxnb2", "Plxna2", "Plxnb3", "Plxnb1")
+
+bin16_list_ann <- readRDS("~/data/bin16_list_ann.rds")
+sham_list <- bin16_list_ann[names(bin16_list_ann) %in% c("sham_b1","sham_b3","sham_b6")]
+c26_list <- bin16_list_ann[names(bin16_list_ann) %in% c("c26_b2","c26_b4","c26_b6")]
+
+for (nm in names(sham_list)) {
+    spe <- sham_list[[nm]]
+    colData(spe)$sample_id <- rep(nm, ncol(spe))
+    sham_list[[nm]] <- spe
+}
+
+for (nm in names(c26_list)) {
+    spe <- c26_list[[nm]]
+    colData(spe)$sample_id <- rep(nm, ncol(spe))
+    c26_list[[nm]] <- spe
+}
+
+combined_sham <- do.call(cbind, sham_list)
+combined_c26 <- do.call(cbind, c26_list)
+combined_sham <- combined_sham[,!is.na(combined_sham$new_cell_type)]
+combined_c26 <- combined_c26[,!is.na(combined_c26$new_cell_type)]
+
+# myo <- c("Myonuclei_IIb","Myonuclei_IIx","Myonuclei_IIx_IIa","Myonuclei_IIx_IIb",
+#          "Myonuclei_MTJ","Myonuclei_NMJ","Myonuclei_Trim63")
+```
+
+#Function for dotplot
+```{r}
+plot_sc_dotplot <- function(sc_object, gene_vector, celltype_col = "celltype", 
+                            save_path = NULL, width = 8, height = 5) {
+  
+  # 1. Extract cell types
+  if (!celltype_col %in% colnames(colData(sc_object))) {
+    stop(paste("Column", celltype_col, "not found in colData(sc_object)"))
+  }
+  celltypes <- colData(sc_object)[[celltype_col]]
+  
+  # 2. Filter for valid genes
+  genes_to_use <- gene_vector[gene_vector %in% rownames(sc_object)]
+  if(length(genes_to_use) == 0) {
+    stop("None of the provided genes were found in the sc_object.")
+  }
+  
+  # 3. Extract sparse matrix ONLY for genes of interest
+  # Using "logcounts" - ensure your sc_object has this assay!
+  expr_mat <- assay(sc_object, "logcounts")[genes_to_use, , drop = FALSE]
+  
+  # 4. Compute average expression per cell type (using Matrix::rowMeans for safety)
+  std_prof <- sapply(unique(celltypes), function(ct) {
+    Matrix::rowMeans(expr_mat[, celltypes == ct, drop = FALSE])
+  })
+  
+  # 5. Compute % expressing cells (using Matrix::rowMeans on a sparse logical matrix)
+  pct_expr <- sapply(unique(celltypes), function(ct) {
+    subset_mat <- expr_mat[, celltypes == ct, drop = FALSE]
+    Matrix::rowMeans(subset_mat > 0)
+  })
+  
+  # 6. Convert to data.frame
+  std_prof <- as.data.frame(std_prof)
+  std_prof$gene <- rownames(std_prof)
+  
+  std_prof_pct <- as.data.frame(pct_expr)
+  std_prof_pct$gene <- rownames(std_prof_pct)
+  
+  # 7. Reshape to Long format
+  expr_long <- std_prof %>%
+    pivot_longer(cols = -gene, names_to = "celltype", values_to = "expression")
+  
+  pct_long <- std_prof_pct %>%
+    pivot_longer(cols = -gene, names_to = "celltype", values_to = "percent")
+  
+  # 8. Merge expression + percent and filter
+  expr_long <- expr_long %>%
+    left_join(pct_long, by = c("gene", "celltype")) %>%
+    filter(expression > 0)
+  
+  # 9. Generate the plot
+  p <- ggplot(expr_long, aes(x = gene, y = celltype)) +
+    geom_point(aes(size = percent, color = expression)) +
+    scale_color_gradient(low = "grey90", high = "red", name = "Mean\nExpression") +
+    scale_size(range = c(1, 6), name = "% Expressing", labels = scales::percent_format()) + 
+    theme_minimal() +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      panel.grid.major = element_line(color = "grey90"),
+      panel.grid.minor = element_blank()
+    ) +
+    labs(x = "Gene", y = "Cell Type")
+  
+  # 10. Save if path is provided
+  if (!is.null(save_path)) {
+    ggsave(filename = save_path, plot = p, width = width, height = height, bg = "white")
+    message("Plot saved to: ", save_path)
+  }
+  
+  return(p)
+}
+```
+
+#Applying the function
+```{r}
+my_plot <- plot_sc_dotplot(combined_sham, genes_axone_guidance, celltype_col = "new_cell_type",
+                           save_path = "sham_dotplot.png")
+my_plot <- plot_sc_dotplot(combined_c26, genes_axone_guidance, celltype_col = "new_cell_type",
+                           save_path = "c26_dotplot.png")
+```
+
+
+
+
+
+
+
+
+
+
+

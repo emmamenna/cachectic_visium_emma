@@ -1,0 +1,119 @@
+---
+title: "GFP_exploration"
+output: html_document
+date: "2026-07-22"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(arrow)
+library(Banksy)
+library(BiocParallel)
+library(DropletUtils)
+library(dplyr)
+library(edgeR)
+library(ggplot2)
+library(graphics)
+library(igraph)
+library(jsonlite)
+library(Matrix)
+library(matrixStats)
+library(OSTA.data)
+library(patchwork)
+library(pheatmap)
+library(S4Vectors)
+library(scDblFinder)
+library(scater)
+library(scran)
+library(scuttle)
+library(SingleCellExperiment)
+library(SpatialExperiment)
+library(SummarizedExperiment)
+library(tidyr)
+library(VisiumIO)
+library(spacexr)
+library(SpotSweeper)
+library(ggspavis)
+library(openxlsx)
+library(spatialreg)
+library(spdep)
+library(spaMM)
+library(scales) 
+library(purrr)
+```
+
+
+#Plotting gfp
+```{r}
+
+save_treatment_plots <- function(spe_list, prefix, outdir = "plots") {
+
+  dir.create(outdir, showWarnings = FALSE, recursive = TRUE)
+
+  for (name_spe in names(spe_list)) {
+
+    spe <- spe_list[[name_spe]]
+    
+    spe$in_treatment <- factor(
+      as.character(spe$in_treatment),
+      levels = c("0", "1"),
+      labels = c("untreated", "treated")
+    )
+
+    # safety check
+    cat("\nProcessing:", prefix, name_spe, "\n")
+    print(table(spe$in_treatment, useNA = "ifany"))
+
+    # plot
+    p <- plotCoords(
+      spe,
+      annotate = "in_treatment"
+    ) +
+      ggtitle(name_spe) +
+      scale_color_manual(
+        values = c("untreated" = "grey", "treated" = "green"),
+        labels = c("0" = "untreated", "1" = "treated"),
+        name = "Treatment"
+      ) +
+      theme_bw()
+
+    # save
+    ggsave(
+      filename = file.path(outdir, paste0(prefix, "_", name_spe, ".png")),
+      plot = p,
+      width = 6,
+      height = 5,
+      dpi = 300
+    )
+  }
+
+  invisible(spe_list)
+}
+
+# run
+fox0_list <- save_treatment_plots(fox0_list, "fox0")
+murf_list <- save_treatment_plots(murf_list, "murf")
+smad_list <- save_treatment_plots(smad_list, "smad")
+```
+
+#Plotting gfp value
+```{r}
+bin16_list_ann_gfp <- readRDS("~/bin16_list_ann_gfp.rds")
+spe <- bin16_list_ann_gfp$c26foxO_b1
+
+lapply()
+plotCoords(spe, annotate = "gfp_value", )
+
+# Itera sugli oggetti SpatialExperiment presenti nella lista
+lista_grafici <- lapply(smad_list, function(spe_elem) {
+  plotCoords(spe_elem, annotate = "gfp_value") +
+    scale_color_gradient(low = "#e5f5e0", high = "#006d2c") # Gradiente dal verde chiaro al verde scuro
+})
+
+#GFP VALUE SU BLOCCO2 MISSING
+
+
+```

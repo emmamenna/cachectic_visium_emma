@@ -9,45 +9,17 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r, include=FALSE}
-library(arrow)
-library(Banksy)
-library(BiocParallel)
-library(DropletUtils)
-library(dplyr)
 library(edgeR)
-library(ggplot2)
-library(graphics)
-library(igraph)
-library(jsonlite)
-library(Matrix)
-library(matrixStats)
-library(OSTA.data)
-library(patchwork)
-library(pheatmap)
-library(S4Vectors)
-library(scDblFinder)
-library(scater)
-library(scran)
-library(scuttle)
-library(SingleCellExperiment)
-library(SpatialExperiment)
-library(SummarizedExperiment)
-library(tidyr)
-library(VisiumIO)
-library(spacexr)
-library(SpotSweeper)
-library(ggspavis)
+library(clusterProfiler)
+library(org.Mm.eg.db)
+library(AnnotationDbi)
 library(openxlsx)
-library(spatialreg)
-library(spdep)
-library(spaMM)
-library(scales) 
-library(purrr)
+library(SummarizedExperiment)
 ```
 
 #objects
 ```{r}
-bin16_list_ann <- readRDS("~/bin16_list_ann_gfp.rds")
+bin16_list_ann <- readRDS("~/data/bin16_list_ann_gfp.rds")
 murf_list <- bin16_list_ann[names(bin16_list_ann) %in%
                                    c("c26murf1_b2", "c26murf1_b3", "c26murf1_b5", "c26murf1_b9")]
 fox0_list <- bin16_list_ann[names(bin16_list_ann) %in%
@@ -71,6 +43,51 @@ myonuclei_types <- c("Myonuclei_IIb", "Myonuclei_IIx",
                      "Myonuclei_IIx_IIa", "Myonuclei_IIx_IIb",
                      "Myonuclei_MTJ", "Myonuclei_NMJ", "Myonuclei_Trim63")
 
+```
+
+#Functions for GSEA steps
+```{r}
+make_geneList_kegg <- function(logFC_named_by_SYMBOL) {
+  # SYMBOL -> ENTREZ mapping
+  ids <- suppressMessages(
+    bitr(names(logFC_named_by_SYMBOL),
+         fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Mm.eg.db)
+  )
+  
+  v <- logFC_named_by_SYMBOL[ids$SYMBOL]
+  names(v) <- ids$ENTREZID
+  v <- v[!is.na(v) & !is.na(names(v))]
+  
+  # Deduplicate: Keep the entry with the highest absolute logFC for duplicate Entrez IDs
+  df <- data.frame(entrez = names(v), logFC = v, absFC = abs(v), stringsAsFactors = FALSE)
+  df <- df[order(df$absFC, decreasing = TRUE), ]
+  df <- df[!duplicated(df$entrez), ]
+  
+  gene_list <- df$logFC
+  names(gene_list) <- df$entrez
+  
+  # Return sorted vector
+  sort(gene_list, decreasing = TRUE)
+}
+
+convert_core_enrichment <- function(entrez_string) {
+  if (is.na(entrez_string) || entrez_string == "") return(NA)
+  
+  entrez_ids <- strsplit(entrez_string, "/")[[1]]
+  
+  # mapIds preserves vector order and size
+  symbols <- suppressMessages(
+    mapIds(org.Mm.eg.db, 
+           keys = entrez_ids, 
+           column = "SYMBOL", 
+           keytype = "ENTREZID", 
+           multiVals = "first")
+  )
+  
+  # Fallback: keep original Entrez ID if Symbol is missing
+  symbols <- ifelse(is.na(symbols), entrez_ids, symbols)
+  paste(symbols, collapse = "/")
+}
 ```
 
 #function to create a combined_spe object
@@ -178,6 +195,86 @@ run_de_analysis <- function(pb, fdr_threshold = 0.05, output_file = NULL) {
 }
 ```
 
+#Function for DEGs and GSEA
+```{r}
+run_de_gsea_pipeline <- function(
+  pb, 
+  group_col = "in_treatment", 
+  ref_level = "untreated",
+  organism = "mmu",
+  OrgDb = org.Mm.eg.db,
+  save_excel = TRUE,
+  output_prefix = "gfp_vs_untreated"
+) {
+
+  pb_var_name <- deparse(substitute(pb))
+  sample_suffix <- sub("^pb_?", "", pb_var_name)
+  
+  y <- DGEList(counts = counts(pb), samples = colData(pb))
+  
+  # Imposta il fattore e il livello di riferimento (untreated)
+  y$samples[[group_col]] <- as.factor(y$samples[[group_col]])
+  y$samples[[group_col]] <- relevel(y$samples[[group_col]], ref = ref_level)
+  
+  keep <- filterByExpr(y, group = y$samples[[group_col]])
+  y <- y[keep, , keep.lib.sizes = FALSE]
+  y <- calcNormFactors(y)
+  
+  # Usiamo ~ group_col (CON INTERCETTA) così relevel() definisce il contrasto
+  design_formula <- as.formula(paste0("~ ", group_col))
+  design <- model.matrix(design_formula, data = y$samples)
+
+  y <- estimateDisp(y, design)
+  fit <- glmFit(y, design)
+
+  # 2. Test Differenziale (coef = 2 testa il secondo livello contro la reference)
+  lrt <- glmLRT(fit, coef = 2)
+  top <- topTags(lrt, n = Inf)$table
+  top$SYMBOL <- rownames(top)
+  top$significant <- top$FDR < 0.05
+
+  # 3. Preparazione lista geni per GSEA
+  geneList <- top$logFC
+  names(geneList) <- top$SYMBOL
+  geneList <- geneList[!is.na(geneList) & !is.na(names(geneList))]
+  geneList_kegg <- make_geneList_kegg(geneList)
+
+  # 4. GSEA
+  gsea_sig <- tryCatch({
+    gseKEGG(
+      geneList = geneList_kegg,
+      organism = organism,
+      pvalueCutoff = 0.05,
+      verbose = FALSE
+    )
+  }, error = function(e) {
+    warning(paste("GSEA fallita:", e$message))
+    return(NULL)
+  })
+
+  # 5. Salvataggio Excel
+  if (save_excel && !is.null(gsea_sig) && nrow(gsea_sig@result) > 0) {
+    gsea_sig@result$core_enrichment_symbols <- sapply(
+      gsea_sig@result$core_enrichment, 
+      convert_core_enrichment
+    )
+    res_df <- as.data.frame(gsea_sig@result)
+    write.xlsx(
+      res_df,
+      file = paste0("GSEA_", output_prefix, "_", sample_suffix, ".xlsx"),
+      rowNames = FALSE
+    )
+  }
+
+  # 6. Restituzione dei risultati
+  return(list(
+    deg = top,
+    gsea = gsea_sig,
+    fit = fit
+  ))
+}
+```
+
 #filtraggio geni
 ```{r}
 # for (nm in names(murf_list)) {
@@ -220,7 +317,8 @@ run_de_analysis <- function(pb, fdr_threshold = 0.05, output_file = NULL) {
 ```{r}
 pb_murf <- prepare_pseudobulk(murf_list, myonuclei_types)
 #pb_murf <- pb_murf[keep_murf,]
-de_results <- run_de_analysis(pb_murf, output_file = "myo_murf_gfp_DEGs.xlsx")
+#de_results <- run_de_analysis(pb_murf, output_file = "myo_murf_gfp_DEGs.xlsx")
+results <- run_de_gsea_pipeline(pb_murf)
 
 pb_fox0 <- prepare_pseudobulk(fox0_list, myonuclei_types)
 #pb_fox0 <- pb_fox0[keep_fox0,]
@@ -229,79 +327,9 @@ de_results <- run_de_analysis(pb_fox0, output_file = "myo_fox0_gfp_DEGs.xlsx")
 
 pb_smad <- prepare_pseudobulk(smad_list, myonuclei_types)
 #pb_smad <- pb_smad[keep_smad,]
-de_results <- run_de_analysis(pb_smad, output_file = "myo_smad_gfp_DEGs.xlsx")
+#de_results <- run_de_analysis(pb_smad, output_file = "myo_smad_gfp_DEGs.xlsx")
+results <- run_de_gsea_pipeline(pb_smad)
 ```
 
-#Plotting gfp
-```{r}
-
-save_treatment_plots <- function(spe_list, prefix, outdir = "plots") {
-
-  dir.create(outdir, showWarnings = FALSE, recursive = TRUE)
-
-  for (name_spe in names(spe_list)) {
-
-    spe <- spe_list[[name_spe]]
-    
-    spe$in_treatment <- factor(
-      as.character(spe$in_treatment),
-      levels = c("0", "1"),
-      labels = c("untreated", "treated")
-    )
-
-    # safety check
-    cat("\nProcessing:", prefix, name_spe, "\n")
-    print(table(spe$in_treatment, useNA = "ifany"))
-
-    # plot
-    p <- plotCoords(
-      spe,
-      annotate = "in_treatment"
-    ) +
-      ggtitle(name_spe) +
-      scale_color_manual(
-        values = c("untreated" = "grey", "treated" = "green"),
-        labels = c("0" = "untreated", "1" = "treated"),
-        name = "Treatment"
-      ) +
-      theme_bw()
-
-    # save
-    ggsave(
-      filename = file.path(outdir, paste0(prefix, "_", name_spe, ".png")),
-      plot = p,
-      width = 6,
-      height = 5,
-      dpi = 300
-    )
-  }
-
-  invisible(spe_list)
-}
-
-# run
-fox0_list <- save_treatment_plots(fox0_list, "fox0")
-murf_list <- save_treatment_plots(murf_list, "murf")
-smad_list <- save_treatment_plots(smad_list, "smad")
-```
-
-#Plotting gfp value
-```{r}
-bin16_list_ann_gfp <- readRDS("~/bin16_list_ann_gfp.rds")
-spe <- bin16_list_ann_gfp$c26foxO_b1
-
-lapply()
-plotCoords(spe, annotate = "gfp_value", )
-
-# Itera sugli oggetti SpatialExperiment presenti nella lista
-lista_grafici <- lapply(smad_list, function(spe_elem) {
-  plotCoords(spe_elem, annotate = "gfp_value") +
-    scale_color_gradient(low = "#e5f5e0", high = "#006d2c") # Gradiente dal verde chiaro al verde scuro
-})
-
-#GFP VALUE SU BLOCCO2 MISSING
-
-
-```
 
 

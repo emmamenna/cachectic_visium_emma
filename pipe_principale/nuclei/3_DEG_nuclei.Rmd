@@ -52,8 +52,8 @@ or in 2 different cell types across conditions.
 #Creating a unique spatial experiment object with all samples
 ```{r}
 # #sample identifiers
-# nuclei_list <- readRDS("~/nuclei_list_ann.rds")
-# # 
+# nuclei_list <- readRDS("~/data/nuclei_list_ann.rds")
+# #
 # for (nm in names(nuclei_list)) {
 #   spe <- nuclei_list[[nm]]
 #   colData(spe)$sample_id <- rep(nm, ncol(spe))
@@ -64,24 +64,24 @@ or in 2 different cell types across conditions.
 # all_cols <- Reduce(union, lapply(nuclei_list, function(x) colnames(colData(x))))
 # common_cols <- Reduce(intersect, lapply(nuclei_list, function(x) colnames(colData(x))))
 # setdiff(all_cols, common_cols)
-# 
+#
 # combined_spe <- do.call(cbind, nuclei_list)
 # table(combined_spe$to_discard)
 # adj_spe <- combined_spe[,combined_spe$to_discard == "FALSE"]
 # table(combined_spe$sample_id)
 # table(combined_spe$sample_id, combined_spe$cell_type)
-# 
+#
 # # Create pseudo-bulk for each cell_type in each sample
 # pb <- aggregateAcrossCells(combined_spe, use.assay.type = "counts",
 #                                 id=DataFrame(label = combined_spe$cell_type,
 #                                              sample = combined_spe$sample_id))
-# 
+#
 # colnames(pb) <- paste(pb$cell_type, pb$sample_id, sep = "_")
 # saveRDS(pb, file = "~/pb_nuclei.rds")
 ```
 
 ```{r}
-pb <- readRDS("~/pb_nuclei.rds")
+pb <- readRDS("~/data/pb_nuclei.rds")
 
 lrt_list <- list()
 summary_list <- list()

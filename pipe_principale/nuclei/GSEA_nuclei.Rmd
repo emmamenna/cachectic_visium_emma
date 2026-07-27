@@ -32,7 +32,7 @@ library(purrr)
 
 #DEG trim c26 vs 2b sham
 ```{r}
-pb_nuclei <- readRDS("~/pb_nuclei.rds")
+pb_nuclei <- readRDS("~/data/pb_nuclei.rds")
 pb_nuclei$group <- paste0(pb_nuclei$cell_type, "_", pb_nuclei$sampletype)
 pb_sub <- pb_nuclei[, pb_nuclei$group %in% c("Myonuclei_Trim63_c26", "Myonuclei_IIb_sham")]
 pb_sub$group <- factor(pb_sub$group, levels = c("Myonuclei_IIb_sham", "Myonuclei_Trim63_c26"))

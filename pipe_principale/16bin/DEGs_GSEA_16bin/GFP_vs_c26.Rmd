@@ -1,0 +1,240 @@
+---
+title: "GFP_vs_c26_degs"
+output: html_document
+date: "2026-05-18"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(edgeR)
+library(clusterProfiler)
+library(org.Mm.eg.db)
+library(AnnotationDbi)
+library(openxlsx)
+library(SummarizedExperiment)
+```
+
+In questo caso non sussiste un problema di dipendenza spaziale,
+perché non c'è un confronto within-sample perciò questo approccio dovrebbe andare bene:
+sono come i DEG normali ma prendendo solo la parte trattata dei campioni
+
+#objects
+```{r}
+bin16_list_ann <- readRDS("~/data/bin16_list_ann.rds")
+treat_list <- bin16_list_ann[names(bin16_list_ann) %in%
+                                   c("c26murf1_b2", "c26murf1_b3", "c26murf1_b5", "c26murf1_b9",
+                                     "c26foxO_b1","c26foxO_b4","c26foxO_b6","c26foxO_b9",
+                                     "c26SMAD23_b2","c26SMAD23_b4","c26SMAD23_b5","c26SMAD23_b9")]
+
+treat_list$c26murf1_b2$to_discard <- NULL
+treat_list$c26SMAD23_b2$to_discard <- NULL
+treat_list$c26murf1_b2$in_treatment <- ifelse(treat_list$c26murf1_b2$in_treatment == TRUE, 1, 0)
+treat_list$c26SMAD23_b2$in_treatment <- ifelse(treat_list$c26SMAD23_b2$in_treatment == TRUE, 1, 0)
+
+#only keeping treated fibers
+treat_list <- lapply(treat_list, function(spe){
+  treated <- spe$in_treatment == "1"
+  spe <- spe[,treated]
+})
+
+c26_list <- bin16_list_ann[names(bin16_list_ann) %in% c("c26_b2","c26_b4","c26_b6")]
+
+new_list <- c(treat_list,c26_list)
+
+myonuclei_types <- c("Myonuclei_IIb", "Myonuclei_IIx",
+                     "Myonuclei_IIx_IIa", "Myonuclei_IIx_IIb",
+                     "Myonuclei_MTJ", "Myonuclei_NMJ", "Myonuclei_Trim63")
+
+contrast_list <- list(
+  "FOXO_vs_C26"   = c("tissue_typec26foxO - tissue_typec26"),
+  "MURF1_vs_C26"  = c("tissue_typec26murf1 - tissue_typec26"),
+  "SMAD23_vs_C26" = c("tissue_typec26SMAD23 - tissue_typec26")
+)
+
+```
+
+#Functions
+```{r}
+make_geneList_kegg <- function(logFC_named_by_SYMBOL) {
+  # SYMBOL -> ENTREZ mapping
+  ids <- suppressMessages(
+    bitr(names(logFC_named_by_SYMBOL),
+         fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Mm.eg.db)
+  )
+  
+  v <- logFC_named_by_SYMBOL[ids$SYMBOL]
+  names(v) <- ids$ENTREZID
+  v <- v[!is.na(v) & !is.na(names(v))]
+  
+  # Deduplicate: Keep the entry with the highest absolute logFC for duplicate Entrez IDs
+  df <- data.frame(entrez = names(v), logFC = v, absFC = abs(v), stringsAsFactors = FALSE)
+  df <- df[order(df$absFC, decreasing = TRUE), ]
+  df <- df[!duplicated(df$entrez), ]
+  
+  gene_list <- df$logFC
+  names(gene_list) <- df$entrez
+  
+  # Return sorted vector
+  sort(gene_list, decreasing = TRUE)
+}
+
+convert_core_enrichment <- function(entrez_string) {
+  if (is.na(entrez_string) || entrez_string == "") return(NA)
+  
+  entrez_ids <- strsplit(entrez_string, "/")[[1]]
+  
+  # mapIds preserves vector order and size
+  symbols <- suppressMessages(
+    mapIds(org.Mm.eg.db, 
+           keys = entrez_ids, 
+           column = "SYMBOL", 
+           keytype = "ENTREZID", 
+           multiVals = "first")
+  )
+  
+  # Fallback: keep original Entrez ID if Symbol is missing
+  symbols <- ifelse(is.na(symbols), entrez_ids, symbols)
+  paste(symbols, collapse = "/")
+}
+```
+
+#Creating a combined_spe object
+```{r}
+
+# Add sample identifiers
+for (nm in names(new_list)) {
+  spe <- new_list[[nm]]
+  colData(spe)$sample_id <- rep(nm, ncol(spe))
+  new_list[[nm]] <- spe
+}
+  
+combined_spe <- do.call(cbind, new_list)
+filtered_spe <- combined_spe[, combined_spe$new_cell_type %in% myonuclei_types]
+  
+pb <- aggregateAcrossCells(filtered_spe, use.assay.type = "counts", id = filtered_spe$sample_id)
+
+colnames(pb) <- paste(pb$tissue_id, pb$sample_id, sep = "_")
+
+pb$tissue_type <- droplevels(pb$tissue_type)
+
+```
+
+#EdgeR pre-processing
+```{r}
+y <- DGEList(counts(pb), samples = colData(pb))
+keep <- filterByExpr(y, group = y$samples$tissue_type)
+y <- y[keep, , keep.lib.sizes = FALSE]
+y <- calcNormFactors(y)
+design <- model.matrix(~ 0 + tissue_type, data = y$samples)
+y <- estimateDisp(y, design)
+fit <- glmFit(y, design)
+
+summary_list <- list()
+gsea_list <- list()
+```
+
+
+#DEGs between conditions
+```{r}
+
+for (contrast_name in names(contrast_list)){
+  contrast <- makeContrasts(
+    contrasts = contrast_list[[contrast_name]],
+    levels = design
+  )
+
+  lrt <- glmLRT(fit, contrast = contrast)
+  top <- topTags(lrt, n = Inf)$table
+  top$SYMBOL <- rownames(top)
+  top$significant <- top$FDR < 0.05
+  sig <- top[top$significant, ]
+  sig_up <- sig[sig$logFC >= 0, ]
+  sig_down <- sig[sig$logFC < 0, ]
+  # wb <- createWorkbook()
+  # addWorksheet(wb, "Tutti_geni")
+  # writeData(wb, "Tutti_geni", top, rowNames = TRUE)
+  # addWorksheet(wb, "Significativi")
+  # writeData(wb, "Significativi", sig, rowNames = TRUE)
+  # addWorksheet(wb, "Upregolati")
+  # writeData(wb, "Upregolati", sig_up, rowNames = TRUE)
+  # addWorksheet(wb, "Downregolati")
+  # writeData(wb, "Downregolati", sig_down, rowNames = TRUE)
+  # file_name <- paste0("DEG_", contrast_name, ".xlsx")
+  # saveWorkbook(wb, file_name, overwrite = TRUE)
+  gene_summary <- data.frame(
+    contrast = contrast_name,
+    genes_tested = nrow(top),
+    genes_significant = nrow(sig),
+    upregulated = nrow(sig_up),
+    downregulated = nrow(sig_down)
+  )
+  summary_list[[contrast_name]] <- gene_summary
+}
+
+summary_df <- do.call(rbind, summary_list)
+print(summary_df)
+```
+
+
+#GSEA (together with DEGs)
+```{r}
+for (contrast_name in names(contrast_list)) {
+  contrast <- makeContrasts(
+    contrasts = contrast_list[[contrast_name]],
+    levels = design
+  )
+
+  lrt <- glmLRT(fit, contrast = contrast)
+  top <- topTags(lrt, n = Inf)$table
+  top$SYMBOL <- rownames(top)
+  top$significant <- top$FDR < 0.05
+  
+  sig <- top[top$significant, ]
+  sig_up <- sig[sig$logFC >= 0, ]
+  sig_down <- sig[sig$logFC < 0, ]
+
+  geneList <- top$logFC
+  names(geneList) <- top$SYMBOL
+  geneList <- geneList[!is.na(geneList) & !is.na(names(geneList))]
+  
+  geneList_kegg <- make_geneList_kegg(geneList)
+
+  # Run GSEA with safety check
+  gsea_sig <- tryCatch({
+    gseKEGG(
+      geneList = geneList_kegg,
+      organism = "mmu",
+      pvalueCutoff = 0.05,
+      verbose = FALSE
+    )
+  }, error = function(e) {
+    warning(paste("GSEA failed for contrast", contrast_name, ":", e$message))
+    return(NULL)
+  })
+
+  gsea_list[[contrast_name]] <- gsea_sig
+
+  # Save results if enrichment paths were found
+  if (!is.null(gsea_sig) && nrow(gsea_sig@result) > 0) {
+    gsea_sig@result$core_enrichment_symbols <- sapply(
+      gsea_sig@result$core_enrichment, 
+      convert_core_enrichment
+    )
+    
+    res_df <- as.data.frame(gsea_sig@result)
+    write.xlsx(
+      res_df,
+      file = paste0("GSEA_", contrast_name, ".xlsx"),
+      rowNames = FALSE
+    )
+  }
+}
+
+```
+
+
+
+

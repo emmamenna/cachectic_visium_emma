@@ -1,0 +1,21 @@
+---
+title: "barplot_logFC"
+output: html_document
+date: "2026-07-22"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+```
+
+#see DEG_GSEA_MYO_ONLY
+
+
+
+
+
