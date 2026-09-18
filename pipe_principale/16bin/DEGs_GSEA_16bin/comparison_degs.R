@@ -82,6 +82,7 @@ for (m_var in multiome_vars) {
     }
     lista_intersezioni[[nome_foglio]] <- df_comuni
     
+    #unique genes
     geni_esclusivi_spatial <- setdiff(s_genes, m_genes)
     if (length(geni_esclusivi_spatial) > 0) {
       df_solo_spatial <- data.frame(Gene_Name = geni_esclusivi_spatial, stringsAsFactors = FALSE)

@@ -396,7 +396,7 @@ if (!is.null(gsea_sig) && nrow(gsea_sig@result) > 0) {
   writeData(wb, sheet = sheet_name, res_df)
 }
   }
-  saveWorkbook(wb, paste0("GSEA_", contrast_name, ".xlsx"), overwrite = TRUE)
+  #saveWorkbook(wb, paste0("GSEA_", contrast_name, ".xlsx"), overwrite = TRUE)
 }
 
 ```
@@ -474,6 +474,8 @@ for (cluster in names(mappatura)) {
 ```{r message = FALSE, warning = FALSE}
 #gsea_sig <- gsea_list$C26_vs_SHAM$Endothelial
 
+gsea_list <- gsea_list[names(gsea_list) == "C26_vs_SHAM"]
+
 for (contrast in names(gsea_list)) {
   
   pdf(paste0("GSEA_", contrast, ".pdf"), width = 16, height = 12)
@@ -482,14 +484,14 @@ for (contrast in names(gsea_list)) {
     
     gsea_sig <- gsea_list[[contrast]][[cell_type]]
     
-    # skip se vuoto
+    # Skip se vuoto
     if (is.null(gsea_sig) || nrow(as.data.frame(gsea_sig@result)) == 0) next
     
-    # --- DOTPLOT ---
+    # --- DOTPLOT (p1) ---
     p1 <- enrichplot::dotplot(
       gsea_sig,
       showCategory = 30,
-      font.size = 8,
+      font.size = 6,
       title = paste("Enriched Pathways -", contrast, "-", cell_type),
       split = ".sign"
     ) + facet_grid(. ~ .sign)
@@ -509,6 +511,9 @@ for (contrast in names(gsea_list)) {
     enrich_pos <- enrich_pos[order(enrich_pos$p.adjust), ][1:min(20, nrow(enrich_pos)), ]
     enrich_neg <- enrich_neg[order(enrich_neg$p.adjust), ][1:min(20, nrow(enrich_neg)), ]
 
+    p2 <- NULL
+    p3 <- NULL
+
     # --- POS ---
     if (nrow(enrich_pos) > 0) {
       p2 <- ggplot(enrich_pos,
@@ -520,8 +525,6 @@ for (contrast in names(gsea_list)) {
         scale_color_gradient(low = "blue", high = "red") +
         theme_minimal(base_size = 14) +
         labs(title = paste("KEGG Positive -", cell_type))
-    } else {
-      p2 <- ggplot() + ggtitle("No positive pathways") + theme_void()
     }
     
     # --- NEG ---
@@ -535,14 +538,24 @@ for (contrast in names(gsea_list)) {
         scale_color_gradient(low = "blue", high = "red") +
         theme_minimal(base_size = 14) +
         labs(title = paste("KEGG Negative -", cell_type))
-    } else {
-      p3 <- ggplot() + ggtitle("No negative pathways") + theme_void()
     }
     
-    # --- COMBINA ---
-    combined_plot <- (p1 / (p2 | p3))
+    # --- COMBINA DINAMICAMENTE ---
+    if (!is.null(p2) && !is.null(p3)) {
+      # Entrambi presenti: p1 sopra, p2 e p3 affiancati sotto
+      combined_plot <- p1 / (p2 | p3)
+    } else if (!is.null(p2)) {
+      # Solo POS presente: p1 sopra, p2 sotto
+      combined_plot <- p1 / p2
+    } else if (!is.null(p3)) {
+      # Solo NEG presente: p1 sopra, p3 sotto
+      combined_plot <- p1 / p3
+    } else {
+      # Nessun pathway significativo in POS o NEG: mostra solo il dotplot
+      combined_plot <- p1
+    }
     
-    print(combined_plot)  # → nuova pagina nel PDF
+    print(combined_plot)
   }
   
   dev.off()

@@ -18,82 +18,337 @@ library(SummarizedExperiment)
 library(limma)
 library(scater)
 library(openxlsx)
+library(pheatmap)
+library(edgeR)
+library(AnnotationDbi)
 ```
 
 ```{r}
-do_kegg_for_sheet <- function(gene_vec, sheet_name = NULL) {
-  genes <- bitr(gene_vec, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Mm.eg.db)
-  genes <- genes[!is.na(genes$ENTREZID), ]
-  if (nrow(genes) == 0) {
-    if(!is.null(sheet_name))
-      message("SKIPPING: No genes mapped for sheet ", sheet_name)
-    return(NULL)
-  }
-  kegg_gsa <- enrichKEGG(gene = genes$ENTREZID, organism = 'mmu', pvalueCutoff = 0.05)
-  # <-- NEW CHECK HERE
-  if (is.null(kegg_gsa) || is.null(kegg_gsa@result) || nrow(kegg_gsa@result) == 0) {
-    message("SKIPPING: KEGG returned NULL for sheet ", sheet_name)
-    return(NULL)
-  }
-  kegg_df <- as.data.frame(kegg_gsa@result)
-  sig_end_common_up <- kegg_df[kegg_df$p.adjust < 0.05, ]
-  if (nrow(sig_end_common_up) == 0) {
-    sig_end_common_up$gene_symbols <- character(0)
-    return(sig_end_common_up)
-  }
-  all_entrez <- unique(unlist(strsplit(sig_end_common_up$geneID, "/")))
-  id_map <- bitr(
-    all_entrez,
-    fromType = "ENTREZID",
-    toType   = "SYMBOL",
-    OrgDb    = org.Mm.eg.db
-  )
-  entrez2symbol <- setNames(id_map$SYMBOL, id_map$ENTREZID)
-  convert_core_enrichment <- function(entrez_string, lookup) {
-    entrez_ids <- strsplit(entrez_string, "/")[[1]]
-    symbols <- lookup[entrez_ids]
-    symbols <- symbols[!is.na(symbols)]
-    paste(symbols, collapse = "/")
-  }
-  sig_end_common_up$gene_symbols <- sapply(
-    sig_end_common_up$geneID,
-    convert_core_enrichment,
-    lookup = entrez2symbol
-  )
-  return(sig_end_common_up)
-}
+# do_kegg_for_sheet <- function(gene_vec, sheet_name = NULL) {
+# 
+#   ## Remove NA and empty strings
+#   gene_vec <- unique(trimws(as.character(gene_vec)))
+#   gene_vec <- gene_vec[!is.na(gene_vec) & gene_vec != ""]
+# 
+#   ## Skip if no genes
+#   if (length(gene_vec) == 0) {
+#     message("SKIPPING: No genes for sheet ", sheet_name)
+#     return(NULL)
+#   }
+# 
+#   ## Convert SYMBOL -> ENTREZID safely
+#   genes <- tryCatch(
+#     bitr(
+#       gene_vec,
+#       fromType = "SYMBOL",
+#       toType = "ENTREZID",
+#       OrgDb = org.Mm.eg.db
+#     ),
+#     error = function(e) {
+#       message("SKIPPING: No valid gene symbols for sheet ", sheet_name)
+#       return(NULL)
+#     }
+#   )
+# 
+#   if (is.null(genes)) 
+#     return(NULL)
+# 
+#   genes <- genes[!is.na(genes$ENTREZID), ]
+# 
+#   if (nrow(genes) == 0) {
+#     message("SKIPPING: No genes mapped for sheet ", sheet_name)
+#     return(NULL)
+#   }
+# 
+#   kegg_gsa <- enrichKEGG(
+#     gene = genes$ENTREZID,
+#     organism = "mmu",
+#     pvalueCutoff = 0.05
+#   )
+# 
+#   if (is.null(kegg_gsa) || 
+#       is.null(kegg_gsa@result) || 
+#       nrow(kegg_gsa@result) == 0) {
+#     message("SKIPPING: KEGG returned no enriched pathways for sheet ", sheet_name)
+#     return(NULL)
+#   }
+# 
+#   kegg_df <- as.data.frame(kegg_gsa@result)
+#   sig_end_common_up <- subset(kegg_df, p.adjust < 0.05)
+# 
+#   if (nrow(sig_end_common_up) == 0) {
+#     sig_end_common_up$gene_symbols <- character(0)
+#   } else {
+#     all_entrez <- unique(unlist(strsplit(sig_end_common_up$geneID, "/")))
+# 
+#     id_map <- bitr(
+#       all_entrez,
+#       fromType = "ENTREZID",
+#       toType = "SYMBOL",
+#       OrgDb = org.Mm.eg.db
+#     )
+# 
+#     entrez2symbol <- setNames(id_map$SYMBOL, id_map$ENTREZID)
+# 
+#     sig_end_common_up$gene_symbols <- sapply(
+#       sig_end_common_up$geneID,
+#       function(x) {
+#         ids <- strsplit(x, "/")[[1]]
+#         paste(na.omit(entrez2symbol[ids]), collapse = "/")
+#       }
+#     )
+#   }
+# 
+#   # Return a list containing both the enrichment object and the filtered data frame
+#   return(list(
+#     gsa_obj = kegg_gsa,
+#     sig_df  = sig_end_common_up
+#   ))
+# }
+# 
+# convert_core_enrichment <- function(entrez_string) {
+#   if (is.na(entrez_string) || entrez_string == "") return(NA)
+#   
+#   entrez_ids <- strsplit(entrez_string, "/")[[1]]
+#   
+#   # mapIds preserves vector order and size
+#   symbols <- suppressMessages(
+#     mapIds(org.Mm.eg.db, 
+#            keys = entrez_ids, 
+#            column = "SYMBOL", 
+#            keytype = "ENTREZID", 
+#            multiVals = "first")
+#   )
+#   
+#   # Fallback: keep original Entrez ID if Symbol is missing
+#   symbols <- ifelse(is.na(symbols), entrez_ids, symbols)
+#   paste(symbols, collapse = "/")
+# }
 ```
 
 #Common degs
 ```{r}
-set.seed(6335)
-excel_path <- "~/common_degs.xlsx"
-sheet_names <- excel_sheets(excel_path)
-results_list <- list()
-for (sheet in sheet_names) {
-  message("Processing sheet: ", sheet)
-  end_common_up <- read_excel(excel_path, sheet = sheet)
-  symbols <- as.vector(end_common_up$Gene_Name)
-  res <- do_kegg_for_sheet(symbols)
-  results_list[[sheet]] <- res
-}
-write.xlsx(results_list, file = "GSEA_common.xlsx")
+# set.seed(6335)
+# excel_path <- "~/data/common_degs.xlsx"
+# sheet_names <- excel_sheets(excel_path)
+# results_list <- list()
+# 
+# for (sheet in sheet_names) {
+#   message("Processing sheet: ", sheet)
+#   end_common_up <- read_excel(excel_path, sheet = sheet)
+#   symbols <- as.vector(end_common_up$Gene_Name)
+#   res <- do_kegg_for_sheet(symbols, sheet_name = sheet) 
+#   results_list[[sheet]] <- res
+# }
+# #write.xlsx(results_list, file = "GSEA_common.xlsx")
 ```
 
-#PER UNICI
+#grafici per i myo overall
+```{r}
+# gsea_myo_down <- results_list[["myo_overall_down"]]$gsa_obj
+# pathways_subset_down <- c("mmu04020", "mmu04820", "mmu04714", "mmu04066", "mmu00020", "mmu04350", "mmu04010", "mmu04012", "mmu01200", "mmu05417", "mmu04144", "mmu00230", "mmu04310", "mmu04371", "mmu04550", "mmu04910", "mmu04713", "mmu00190", "mmu00010")
+# gsea_myo_down@result <- gsea_myo_down@result[gsea_myo_down@result$ID %in% pathways_subset_down,]
+# 
+# p <- enrichplot::dotplot(gsea_myo_down, showCategory = 25, font.size = 8,
+#                     title = "Enriched Pathways")
+# ggsave("pathways_myo_downDEGs.pdf", plot = p,
+#        width = 8, height = 9, dpi = 300)
+# 
+# gsea_myo_up <- results_list[["myo_overall_up"]]$gsa_obj
+# pathways_subset_up <- c("mmu03050", "mmu04140", "mmu04211", "mmu04068", "mmu04152", "mmu04137", "mmu04550", "mmu04931", "mmu01521", "mmu05202", "mmu04520")
+# gsea_myo_up@result <- gsea_myo_up@result[gsea_myo_up@result$ID %in% pathways_subset_up,]
+# 
+# p <- enrichplot::dotplot(gsea_myo_up, showCategory = 15, font.size = 8,
+#                     title = "Enriched Pathways")
+# ggsave("pathways_myo_upDEGs.pdf", plot = p,
+#        width = 8, height = 9, dpi = 300)
+```
+
+
+#per i myo overall (intanto) prendo i deg della spatial e seleziono solo quelli comuni
+#ho deciso che allora però tengo assieme up e down, non vedo perché dividerli
 ```{r}
 set.seed(6335)
-excel_path <- "~/per_git/genes_unici.xlsx"
-sheet_names <- excel_sheets(excel_path)
-results_list <- list()
-for (sheet in sheet_names) {
-  message("Processing sheet: ", sheet)
-  end_common_up <- read_excel(excel_path, sheet = sheet)
-  symbols <- as.vector(end_common_up$Gene_Name)
-  res <- do_kegg_for_sheet(symbols, sheet_name = sheet)
-  if(!is.null(res)) results_list[[sheet]] <- res
+excel_path <- "~/data/common_degs.xlsx"
+myo_up <- read_excel(excel_path, sheet = 10)
+myo_down <- read_excel(excel_path, sheet = 9)
+myo_up_vec <- as.vector(myo_up$Gene_Name)
+myo_down_vec <- as.vector(myo_down$Gene_Name)
+myo_overall_common_degs <- c(myo_up_vec, myo_down_vec)
+```
+
+#riproduco il codice della gsea per i myo overall facendo solo questo subset -------------------------
+
+#Functions
+```{r}
+make_geneList_kegg <- function(logFC_named_by_SYMBOL) {
+  # SYMBOL -> ENTREZ mapping
+  ids <- suppressMessages(
+    bitr(names(logFC_named_by_SYMBOL),
+         fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Mm.eg.db)
+  )
+  
+  v <- logFC_named_by_SYMBOL[ids$SYMBOL]
+  names(v) <- ids$ENTREZID
+  v <- v[!is.na(v) & !is.na(names(v))]
+  
+  # Deduplicate: Keep the entry with the highest absolute logFC for duplicate Entrez IDs
+  df <- data.frame(entrez = names(v), logFC = v, absFC = abs(v), stringsAsFactors = FALSE)
+  df <- df[order(df$absFC, decreasing = TRUE), ]
+  df <- df[!duplicated(df$entrez), ]
+  
+  gene_list <- df$logFC
+  names(gene_list) <- df$entrez
+  
+  # Return sorted vector
+  sort(gene_list, decreasing = TRUE)
 }
-write.xlsx(results_list, file = "GSEA_unici.xlsx")
+
+convert_core_enrichment <- function(entrez_string) {
+  if (is.na(entrez_string) || entrez_string == "") return(NA)
+  
+  entrez_ids <- strsplit(entrez_string, "/")[[1]]
+  
+  # mapIds preserves vector order and size
+  symbols <- suppressMessages(
+    mapIds(org.Mm.eg.db, 
+           keys = entrez_ids, 
+           column = "SYMBOL", 
+           keytype = "ENTREZID", 
+           multiVals = "first")
+  )
+  
+  # Fallback: keep original Entrez ID if Symbol is missing
+  symbols <- ifelse(is.na(symbols), entrez_ids, symbols)
+  paste(symbols, collapse = "/")
+}
+```
+
+#Objects
+```{r}
+bin16_list_ann <- readRDS("~/data/bin16_list_ann.rds")
+subset_list <- bin16_list_ann[names(bin16_list_ann) %in%
+                                   c("sham_b1", "c26_b2", "sham_b3", "c26_b4",  "c26_b6", "sham_b6")]
+```
+
+#Samples preparation
+```{r}
+for (nm in names(subset_list)) {
+  spe <- subset_list[[nm]]
+  colData(spe)$sample_id <- rep(nm, ncol(spe))
+  subset_list[[nm]] <- spe
+}
+
+combined_spe <- do.call(cbind, subset_list)
+combined_myo <- combined_spe[,combined_spe$new_cell_type %in% c("Myonuclei_IIb", "Myonuclei_IIx",
+                                      "Myonuclei_IIx_IIa","Myonuclei_IIx_IIb", "Myonuclei_MTJ",
+                                      "Myonuclei_NMJ", "Myonuclei_Trim63")]
+
+pb <- aggregateAcrossCells(combined_myo, use.assay.type = "counts",  ids=combined_myo$sample_id)
+pb$tissue_type <- droplevels(pb$tissue_type)
+```
+
+#degs 
+```{r}
+y <- DGEList(counts(pb), samples = colData(pb))
+keep <- filterByExpr(y, group = y$samples$tissue_type)
+y <- y[keep, , keep.lib.sizes = FALSE]
+y <- calcNormFactors(y)
+design <- model.matrix(~ 0 + tissue_type, data = y$samples)
+y <- estimateDisp(y, design)
+fit <- glmFit(y, design)
+se <- SummarizedExperiment(assays = list(counts = y$counts), colData = y$samples)
+assay(se, "norm") <- cpm(y, log = TRUE, prior.count = 1)
+```
+
+```{r}
+contrast_name <- "C26_vs_SHAM"
+contrast <- makeContrasts(
+  C26_vs_SHAM = "tissue_typec26 - tissue_typesham",
+  levels = design
+)
+
+lrt <- glmLRT(fit, contrast = contrast)
+top <- topTags(lrt, n = Inf)$table
+top$SYMBOL <- rownames(top)
+```
+
+
+```{r}
+top_common <- top[top$SYMBOL %in% myo_overall_common_degs,]
+dim(top_common)
+
+geneList <- top_common$logFC
+names(geneList) <- top_common$SYMBOL
+geneList <- geneList[!is.na(geneList) & !is.na(names(geneList))]
+geneList <- make_geneList_kegg(geneList)
+
+gsea_sig <- gseKEGG(
+  geneList = geneList,
+  organism = "mmu",
+  pvalueCutoff = 0.05,
+  verbose = FALSE
+)
+
+if (!is.null(gsea_sig) && nrow(gsea_sig@result) > 0) {
+  gsea_sig@result$core_enrichment_symbols <-
+    sapply(gsea_sig@result$core_enrichment, convert_core_enrichment)
+  res_df <- as.data.frame(gsea_sig@result)
+}
+
+write.xlsx(res_df, file = paste0("GSEA_", contrast_name, ".xlsx"), rowNames = FALSE)
+```
+
+#GRAFICI ...
+```{r}
+# p <- enrichplot::dotplot(gsea_myo_stat3_c26, showCategory = 15, font.size = 8,
+#                     title = "Enriched Pathways", split=".sign") + facet_grid(.~.sign)
+# ggsave("pathways_myo_stat3_c26.pdf", plot = p,
+#        width = 8, height = 9, dpi = 300)
+# 
+# #second plot 
+# enrich_KEGG <- as.data.frame(gsea_myo_stat3_c26@result)
+# enrich_KEGG <- enrich_KEGG[order(enrich_KEGG$p.adjust), ]
+# enrich_KEGG <- enrich_KEGG[enrich_KEGG$p.adjust < 0.05, ]
+# 
+# enrich_KEGG$Count <- sapply(strsplit(enrich_KEGG$core_enrichment, "/"), length)
+# enrich_KEGG$GeneRatio <- enrich_KEGG$Count / enrich_KEGG$setSize
+# 
+# enrich_pos <- enrich_KEGG[enrich_KEGG$NES > 0, ]
+# enrich_neg <- enrich_KEGG[enrich_KEGG$NES < 0, ]
+# 
+# # grafico positivi
+# p_pos <- ggplot(enrich_pos,
+#                 aes(x = -log10(p.adjust),
+#                     y = reorder(Description, -log10(p.adjust)),
+#                     color = GeneRatio,
+#                     size = Count)) +
+#   geom_point() +
+#   scale_color_gradient(low = "blue", high = "red") +
+#   theme_minimal(base_size = 16) +
+#   ylab("Description") +
+#   xlab("-log10(p.adjust)") +
+#   ggtitle("KEGG Positive Pathways")
+# 
+# ggsave("myo_stat3_c26_pos.pdf", plot = p_pos,
+#        width = 20, height = 9, dpi = 300)
+# 
+# # grafico negativi
+# p_neg <- ggplot(enrich_neg,
+#                 aes(x = -log10(p.adjust),
+#                     y = reorder(Description, -log10(p.adjust)),
+#                     color = GeneRatio,
+#                     size = Count)) +
+#   geom_point() +
+#   scale_color_gradient(low = "blue", high = "red") +
+#   theme_minimal(base_size = 16) +
+#   ylab("Description") +
+#   xlab("-log10(p.adjust)") +
+#   ggtitle("KEGG Negative Pathways")
+# 
+# ggsave("myo_stat3_c26_neg.pdf", plot = p_neg,
+#        width = 20, height = 9, dpi = 300)
+
 ```
 
 

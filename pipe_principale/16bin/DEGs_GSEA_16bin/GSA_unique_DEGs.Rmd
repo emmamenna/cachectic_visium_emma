@@ -1,0 +1,442 @@
+---
+title: "GSA_unique_DEGs"
+output: html_document
+date: "2026-08-31"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(writexl)
+library(muscat)
+library(org.Mm.eg.db)
+library(clusterProfiler)
+library(readxl)
+library(SummarizedExperiment)
+library(limma)
+library(scater)
+library(openxlsx)
+library(pheatmap)
+library(edgeR)
+library(AnnotationDbi)
+```
+
+```{r}
+do_kegg_for_sheet <- function(gene_vec, sheet_name = NULL) {
+
+  ## Remove NA and empty strings
+  gene_vec <- unique(trimws(as.character(gene_vec)))
+  gene_vec <- gene_vec[!is.na(gene_vec) & gene_vec != ""]
+
+  ## Skip if no genes
+  if (length(gene_vec) == 0) {
+    message("SKIPPING: No genes for sheet ", sheet_name)
+    return(NULL)
+  }
+
+  ## Convert SYMBOL -> ENTREZID safely
+  genes <- tryCatch(
+    bitr(
+      gene_vec,
+      fromType = "SYMBOL",
+      toType = "ENTREZID",
+      OrgDb = org.Mm.eg.db
+    ),
+    error = function(e) {
+      message("SKIPPING: No valid gene symbols for sheet ", sheet_name)
+      return(NULL)
+    }
+  )
+
+  if (is.null(genes)) 
+    return(NULL)
+
+  genes <- genes[!is.na(genes$ENTREZID), ]
+
+  if (nrow(genes) == 0) {
+    message("SKIPPING: No genes mapped for sheet ", sheet_name)
+    return(NULL)
+  }
+
+  kegg_gsa <- enrichKEGG(
+    gene = genes$ENTREZID,
+    organism = "mmu",
+    pvalueCutoff = 0.05
+  )
+
+  if (is.null(kegg_gsa) || 
+      is.null(kegg_gsa@result) || 
+      nrow(kegg_gsa@result) == 0) {
+    message("SKIPPING: KEGG returned no enriched pathways for sheet ", sheet_name)
+    return(NULL)
+  }
+
+  kegg_df <- as.data.frame(kegg_gsa@result)
+  sig_end_common_up <- subset(kegg_df, p.adjust < 0.05)
+
+  if (nrow(sig_end_common_up) == 0) {
+    sig_end_common_up$gene_symbols <- character(0)
+  } else {
+    all_entrez <- unique(unlist(strsplit(sig_end_common_up$geneID, "/")))
+
+    id_map <- bitr(
+      all_entrez,
+      fromType = "ENTREZID",
+      toType = "SYMBOL",
+      OrgDb = org.Mm.eg.db
+    )
+
+    entrez2symbol <- setNames(id_map$SYMBOL, id_map$ENTREZID)
+
+    sig_end_common_up$gene_symbols <- sapply(
+      sig_end_common_up$geneID,
+      function(x) {
+        ids <- strsplit(x, "/")[[1]]
+        paste(na.omit(entrez2symbol[ids]), collapse = "/")
+      }
+    )
+  }
+
+  # Return a list containing both the enrichment object and the filtered data frame
+  return(list(
+    gsa_obj = kegg_gsa,
+    sig_df  = sig_end_common_up
+  ))
+}
+
+convert_core_enrichment <- function(entrez_string) {
+  if (is.na(entrez_string) || entrez_string == "") return(NA)
+  
+  entrez_ids <- strsplit(entrez_string, "/")[[1]]
+  
+  # mapIds preserves vector order and size
+  symbols <- suppressMessages(
+    mapIds(org.Mm.eg.db, 
+           keys = entrez_ids, 
+           column = "SYMBOL", 
+           keytype = "ENTREZID", 
+           multiVals = "first")
+  )
+  
+  # Fallback: keep original Entrez ID if Symbol is missing
+  symbols <- ifelse(is.na(symbols), entrez_ids, symbols)
+  paste(symbols, collapse = "/")
+}
+```
+
+
+#data loading
+```{r}
+set.seed(6335)
+excel_path <- "~/data/spatial_only_degs.xlsx"
+sheet_names <- excel_sheets(excel_path)
+results_list <- list()
+for (sheet in sheet_names) {
+  message("Processing sheet: ", sheet)
+  end_common_up <- read_excel(excel_path, sheet = sheet)
+  symbols <- as.vector(end_common_up$Gene_Name)
+  res <- do_kegg_for_sheet(symbols, sheet_name = sheet)
+  if(!is.null(res)) results_list[[sheet]] <- res
+}
+#write.xlsx(results_list, file = "GSEA_unici.xlsx")
+```
+
+#Extracting info for barplot
+```{r}
+extract_pathway_degs <- function(pathway_description, target) {
+  
+  gsea_df <- results_list[[target]]$sig_df
+  gene_symbols <- gsea_df$gene_symbols[gsea_df$Description == pathway_description]
+  gene_vector <- unlist(strsplit(gene_symbols[1], "/"))
+  
+  top_df <- logfc_file
+  
+  res_df <- data.frame(
+    Gene  = gene_vector,
+    logFC = top_df[top_df$gene %in% gene_vector, "logFC"],
+    fdr   = top_df[top_df$gene %in% gene_vector, "FDR"],
+    stringsAsFactors = FALSE
+  )
+  
+  return(res_df)
+}
+```
+
+#myo overall down
+```{r}
+logfc_file <- read_excel("~/data/degs_myo_overall.xlsx", sheet = 1)
+names(logfc_file)[1] <- "gene"
+
+deg_data_axg <- extract_pathway_degs("Axon guidance", "myo_overall_down")
+deg_data_rel <- extract_pathway_degs("Relaxin signaling pathway", "myo_overall_down")
+deg_data_wnt <- extract_pathway_degs("Wnt signaling pathway", "myo_overall_down")
+deg_data_per <- extract_pathway_degs("Peroxisome", "myo_overall_down")
+
+deg_data_auto <- extract_pathway_degs("Autophagy - animal", "myo_overall_up")
+deg_data_prot <- extract_pathway_degs("Proteasome", "myo_overall_up")
+deg_data_lys <- extract_pathway_degs("Lysosome biogenesis", "myo_overall_up")
+deg_data_apo <- extract_pathway_degs("Apoptosis", "myo_overall_up")
+deg_data_nfkb <- extract_pathway_degs("NF-kappa B signaling pathway", "myo_overall_up")
+deg_data_tnf <- extract_pathway_degs("TNF signaling pathway", "myo_overall_up")
+deg_data_glut <- extract_pathway_degs("Glutathione metabolism", "myo_overall_up")
+
+```
+
+#barplot PER LOGFC NEGATIVI
+```{r}
+plot_deg_bar_neg <- function(data, filename = "deg_analysis_prot.png", width = 8, height = 12, dpi = 300) {
+  
+  p <- ggplot(data, aes(x = reorder(Gene, -logFC), y = logFC, fill = FDR)) + #ATT AL SEGNO DI LOGFC DA CAMBIARE
+    geom_col(width = 0.7) +
+    coord_flip() +
+    scale_fill_gradient(
+      low = "#1f77b4",   # Colore scuro per FDR più bassi (più significativi)
+      high = "#aec7e8",  # Colore chiaro per FDR più alti
+      name = "Adjusted p-value"
+    ) +
+    theme_minimal(base_size = 8) +
+    labs(
+      title = "Differentially Expressed Genes",
+      x = "Gene Symbol",
+      y = expression(log[2]~"Fold Change")
+    ) +
+    theme(
+      plot.title = element_text(face = "bold", hjust = 0.5, size = 14),
+      panel.grid.major.y = element_blank(),
+      axis.text.y = element_text(size = 12)
+    )
+  
+  # Salva il grafico su file
+  ggsave(
+    filename = filename,
+    plot = p,
+    width = width,
+    height = height,
+    dpi = dpi
+  )
+  
+  # Restituisce l'oggetto ggplot in modo da poterlo mostrare o personalizzare ulteriormente
+  return(p)
+}
+```
+
+```{r}
+p <- plot_deg_bar_neg(deg_data_axg, "logFC_myo_down_axone_guidance.png")
+p <- plot_deg_bar_neg(deg_data_rel, "logFC_myo_down_relaxin.png")
+p <- plot_deg_bar_neg(deg_data_wnt, "logFC_myo_down_wnt.png")
+p <- plot_deg_bar_neg(deg_data_per, "logFC_myo_down_peroxisome.png")
+```
+
+#barplot PER LOGFC POSITIVI
+```{r}
+plot_deg_bar_pos <- function(data, filename = "deg_analysis_prot.png", width = 8, height = 12, dpi = 300) {
+  
+  p <- ggplot(data, aes(x = reorder(Gene, logFC), y = logFC, fill = FDR)) + #ATT AL SEGNO DI LOGFC DA CAMBIARE
+    geom_col(width = 0.7) +
+    coord_flip() +
+    scale_fill_gradient(
+    low = "#8c0000",   # Rosso scuro/intenso per FDR più bassi (più significativi)
+    high = "#ffcccc",  # Rosa/Rosso molto chiaro per FDR più alti
+    name = "Adjusted p-value"
+    ) +
+    theme_minimal(base_size = 8) +
+    labs(
+      title = "Differentially Expressed Genes",
+      x = "Gene Symbol",
+      y = expression(log[2]~"Fold Change")
+    ) +
+    theme(
+      plot.title = element_text(face = "bold", hjust = 0.5, size = 14),
+      panel.grid.major.y = element_blank(),
+      axis.text.y = element_text(size = 12)
+    )
+  
+  # Salva il grafico su file
+  ggsave(
+    filename = filename,
+    plot = p,
+    width = width,
+    height = height,
+    dpi = dpi
+  )
+  
+  # Restituisce l'oggetto ggplot in modo da poterlo mostrare o personalizzare ulteriormente
+  return(p)
+}
+```
+
+```{r}
+p <- plot_deg_bar_pos(deg_data_auto, "logFC_myo_up_autophagy.png")
+p <- plot_deg_bar_pos(deg_data_prot, "logFC_myo_up_proteosome.png")
+p <- plot_deg_bar_pos(deg_data_lys, "logFC_myo_up_lysosomebio.png")
+p <- plot_deg_bar_pos(deg_data_apo, "logFC_myo_up_apoptosis.png")
+p <- plot_deg_bar_pos(deg_data_nfkb, "logFC_myo_up_nfkb.png")
+p <- plot_deg_bar_pos(deg_data_tnf, "logFC_myo_up_tnf.png")
+p <- plot_deg_bar_pos(deg_data_glut, "logFC_myo_up_glutmet.png")
+```
+
+#heatmap preparation
+```{r}
+bin16_list_ann <- readRDS("~/data/bin16_list_ann.rds")
+c26_sham_list <- bin16_list_ann[names(bin16_list_ann) %in% c("sham_b1","c26_b2","sham_b3","c26_b4","sham_b6","c26_b6")]
+
+#seleziona solo myo
+myo_types <- c("Myonuclei_IIb", "Myonuclei_IIx", "Myonuclei_IIx_IIa","Myonuclei_IIx_IIb", "Myonuclei_MTJ",
+                                      "Myonuclei_NMJ", "Myonuclei_Trim63")
+c26_sham_list <- lapply(c26_sham_list, function(spe) {
+  spe <- spe[, spe$cell_type %in% myo_types]
+  spe$cell_type <- droplevels(spe$cell_type)
+  return(spe)
+})
+```
+
+#heatmap function
+```{r}
+plot_gene_heatmaps_pdf <- function(lista_geni, spe_list, filename = "heatmaps.pdf", width = 8, height = 10) {
+  
+  # Se viene passato un singolo vettore invece di una lista, viene convertito in lista
+  if (!is.list(lista_geni)) {
+    lista_geni <- list(Geni = lista_geni)
+  }
+  
+  # Assegna nomi generici se la lista non è nominata
+  if (is.null(names(lista_geni))) {
+    names(lista_geni) <- paste("Set", seq_along(lista_geni))
+  }
+  
+  # Apre il device PDF
+  pdf(filename, width = width, height = height)
+  
+  for (nome_set in names(lista_geni)) {
+    geni <- lista_geni[[nome_set]]
+    
+    # 1. Estrazione e calcolo delle medie per tessuto
+    lista_matrici <- lapply(spe_list, function(spe) {
+      # Controllo di sicurezza: prende solo i geni effettivamente presenti nell'oggetto
+      geni_validi <- intersect(geni, rownames(spe))
+      if (length(geni_validi) == 0) return(NULL)
+      
+      somme <- rowSums(counts(spe)[geni_validi, , drop = FALSE])
+      df <- as.data.frame(t(somme))
+      df$tissue_type <- unique(spe$tissue_type)
+      return(df)
+    })
+    
+    # Rimuove eventuali elementi NULL
+    lista_matrici <- Filter(Negate(is.null), lista_matrici)
+    
+    if (length(lista_matrici) == 0) {
+      warning(paste("Nessun gene trovato per il set:", nome_set))
+      next
+    }
+    
+    # 2. Aggregazione dei dati
+    df_totale <- do.call(rbind, lista_matrici)
+    tabella_finale <- aggregate(. ~ tissue_type, data = df_totale, FUN = mean)
+    
+    matrice_heatmap <- as.matrix(tabella_finale[, -1])
+    rownames(matrice_heatmap) <- tabella_finale$tissue_type
+    
+    # 3. Generazione dell'heatmap (una pagina per ciascun set di geni)
+    pheatmap(
+      t(matrice_heatmap),
+      cluster_rows = TRUE,
+      cluster_cols = TRUE,
+      display_numbers = FALSE,
+      color = colorRampPalette(c("blue", "white", "red"))(100),
+      main = paste("Heatmap Espressione -", nome_set)
+    )
+  }
+  
+  # Chiude e salva il file PDF
+  dev.off()
+  message("Grafici salvati con successo in: ", filename)
+}
+```
+
+#heatmap execution
+```{r}
+# 1. Definizione dei gruppi di geni
+genes_pathways <- list(
+  "Axon guidance"   = deg_data_axg$Gene,
+  "Relaxin signaling pathway" = deg_data_rel$Gene,
+  "Wnt signaling pathway" = deg_data_wnt$Gene,
+  "Peroxisome" = deg_data_per$Gene,
+  "Autophagy - animal" = deg_data_auto$Gene,
+  "Proteasome" = deg_data_prot$Gene,
+  "Lysosome biogenesis" = deg_data_lys$Gene,
+  "Apoptosis" = deg_data_apo$Gene,
+  "NF-kappa B signaling pathway" = deg_data_nfkb$Gene,
+  "TNF signaling pathway" = deg_data_tnf$Gene,
+  "Glutathione metabolism" = deg_data_glut$Gene
+)
+
+plot_gene_heatmaps_pdf(
+  lista_geni = genes_pathways,
+  spe_list = c26_sham_list,
+  filename = "Heatmaps_pathways.pdf",
+  width = 8,
+  height = 10
+)
+```
+
+
+#dotplot unique genes
+```{r}
+gsea_myo_down <- results_list[["myo_overall_down"]]$gsa_obj
+pathways_subset_down <- c(
+  "Thermogenesis",
+  "Oxidative phosphorylation",
+  "Cytoskeleton in muscle cells",
+  "Citrate cycle (TCA cycle)",
+  "Hedgehog signaling pathway",
+  "Glycine, serine and threonine metabolism",
+  "Relaxin signaling pathway",
+  "MAPK signaling pathway",
+  "Pyrimidine metabolism",
+  "Peroxisome",
+  "Pyruvate metabolism",
+  "Phosphatidylinositol signaling system",
+  "Wnt signaling pathway",
+  "mTOR signaling pathway",
+  "Axon guidance",
+  "Inositol phosphate metabolism",
+  "Valine, leucine and isoleucine degradation"
+)
+gsea_myo_down@result <- gsea_myo_down@result[gsea_myo_down@result$Description %in% pathways_subset_down,]
+
+# p <- enrichplot::dotplot(gsea_myo_down, showCategory = 25, font.size = 8,
+#                     title = "Enriched Pathways")
+# ggsave("pathways_myo_downDEGs.pdf", plot = p,
+#        width = 8, height = 9, dpi = 300)
+
+gsea_myo_up <- results_list[["myo_overall_up"]]$gsa_obj
+pathways_subset_up <- c("mmu04140", "mmu03050", "mmu04142", "mmu04210", "mmu04064", "mmu04668", "mmu00480")
+gsea_myo_up@result <- gsea_myo_up@result[gsea_myo_up@result$ID %in% pathways_subset_up,]
+
+# p <- enrichplot::dotplot(gsea_myo_up, showCategory = 15, font.size = 8,
+#                     title = "Enriched Pathways")
+# ggsave("pathways_myo_upDEGs.pdf", plot = p,
+#        width = 8, height = 9, dpi = 300)
+```
+
+#plot with up and down together
+```{r}
+combined_res <- gsea_myo_up
+raw_combined <- rbind(gsea_myo_up@result, gsea_myo_down@result)
+
+#Rimuovi righe duplicate mantenendo la più significativa (p.adjust minore)
+raw_combined <- raw_combined[order(raw_combined$p.adjust), ]
+combined_res@result <- raw_combined[!duplicated(raw_combined$ID), ]
+
+p <- enrichplot::dotplot(combined_res, showCategory = 50, font.size = 8,
+                    title = "Enriched Pathways")
+ggsave("pathways_myo_combined_unique.pdf", plot = p,
+       width = 8, height = 9, dpi = 300)
+```
+
+
+
+

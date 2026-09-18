@@ -108,6 +108,7 @@ se <- SummarizedExperiment(assays = list(counts = y$counts),
 assay(se, "norm") <- cpm(y, log = TRUE, prior.count = 1)
 
 gsea_list <- list()
+dge_list <- list()
 
 for (contrast_name in names(contrast_list)) {
 
@@ -121,13 +122,15 @@ for (contrast_name in names(contrast_list)) {
   top$SYMBOL <- rownames(top)
   top$significant <- top$FDR < 0.05
 
-  rowData(se)$PVAL     <- top$PValue[match(rownames(se), rownames(top))]
-  rowData(se)$FC       <- top$logFC[match(rownames(se), rownames(top))]
-  rowData(se)$ADJ.PVAL <- top$FDR[match(rownames(se), rownames(top))]
-  rowData(se)$SYMBOL   <- top$SYMBOL[match(rownames(se), rownames(top))]
+  dge_list[[contrast_name]] <- top
+  
+  rowData(se)[[paste0("PVAL_", contrast_name)]]     <- top$PValue[match(rownames(se), rownames(top))]
+  rowData(se)[[paste0("FC_", contrast_name)]]       <- top$logFC[match(rownames(se), rownames(top))]
+  rowData(se)[[paste0("ADJ.PVAL_", contrast_name)]] <- top$FDR[match(rownames(se), rownames(top))]
+  rowData(se)[[paste0("SYMBOL_", contrast_name)]]   <- top$SYMBOL[match(rownames(se), rownames(top))]
 
-  geneList <- rowData(se)$FC
-  names(geneList) <- rowData(se)$SYMBOL
+  geneList <- top$logFC
+  names(geneList) <- top$SYMBOL
   geneList <- geneList[!is.na(geneList) & !is.na(names(geneList))]
   geneList <- make_geneList_kegg(geneList)
 
@@ -144,49 +147,81 @@ for (contrast_name in names(contrast_list)) {
     gsea_sig@result$core_enrichment_symbols <-
       sapply(gsea_sig@result$core_enrichment, convert_core_enrichment)
     res_df <- as.data.frame(gsea_sig@result)
-    write.xlsx(
-      res_df,
-      file = paste0("GSEA_", contrast_name, ".xlsx"),
-      rowNames = FALSE
-    )
+  
+    # write.xlsx(
+    #   res_df,
+    #   file = paste0("GSEA_", contrast_name, ".xlsx"),
+    #   rowNames = FALSE
+    # )
   }
 }
 ```
 
-#barplot logFC pathways of interest
+#Extracting info for barplot
 ```{r}
-genes <- gsea_list$STAT3_vs_C26@result$core_enrichment[gsea_list$STAT3_vs_C26@result$Description == "Autophagy - animal"]
-gene_symbols <- convert_core_enrichment(genes)
-#devo salvare anche i risultati dei DEG nella funzione sopra così posso prendere i logFC
-
+extract_pathway_degs <- function(pathway_description, 
+                                 contrast_name = "STAT3_vs_C26", 
+                                 gsea_res_list = gsea_list, 
+                                 dge_res_list = dge_list) {
+  
+  gsea_df <- gsea_res_list[[contrast_name]]@result
+  core_genes <- gsea_df$core_enrichment[gsea_df$Description == pathway_description]
+  
+  if (length(core_genes) == 0 || is.na(core_genes)) {
+    warning(paste("Pathway non trovato nei risultati GSEA:", pathway_description))
+    return(NULL)
+  }
+  gene_symbols <- convert_core_enrichment(core_genes)
+  gene_vector <- unlist(strsplit(gene_symbols[1], "/"))
+  
+  top_df <- dge_res_list[[contrast_name]]
+  
+  res_df <- data.frame(
+    Gene  = gene_vector,
+    logFC = top_df[gene_vector, "logFC"],
+    fdr   = top_df[gene_vector, "FDR"],
+    stringsAsFactors = FALSE
+  )
+  
+  return(res_df)
+}
 ```
 
-#data formatting for barplot
 ```{r}
-deg_data <- data.frame(
-  Gene = ,
-  logFC = ,
-  padj = 
-)
+deg_data_auto <- extract_pathway_degs("Autophagy - animal")
+deg_data_prot <- extract_pathway_degs("Proteasome")
+deg_data_ubi <- extract_pathway_degs("Ubiquitin mediated proteolysis")
 ```
 
 #barplot
 ```{r}
-ggplot(deg_data, aes(x = reorder(Gene, -logFC), y = logFC, fill = padj)) +
+p <- ggplot(deg_data_prot, aes(x = reorder(Gene, - logFC), y = logFC, fill = fdr)) +
   geom_col(width = 0.7) +
   coord_flip() +
-  scale_fill_gradient(low = "#1f77b4", high = "#aec7e8") +
-  theme_minimal(base_size = 13) +
+  scale_fill_gradient(
+    low = "#1f77b4",   # Colore scuro per FDR più bassi (più significativi)
+    high = "#aec7e8",  # Colore chiaro per FDR più alti
+    name = "Adjusted p-value"
+  ) +
+  theme_minimal(base_size = 11) +
   labs(
-    title = "Top Downregulated Genes",
+    title = "Differentially Expressed Genes",
     x = "Gene Symbol",
-    y = expression(log[2]~"Fold Change"),
-    fill = "Adjusted p-value"
+    y = expression(log[2]~"Fold Change")
   ) +
   theme(
-    plot.title = element_text(face = "bold", hjust = 0.5),
-    panel.grid.major.y = element_blank()
+    plot.title = element_text(face = "bold", hjust = 0.5, size = 14),
+    panel.grid.major.y = element_blank(),
+    axis.text.y = element_text(size = 8) # Dimensione adatta per 64 etichette
   )
+print(p)
+ggsave(
+  filename = "deg_analysis_prot.png",
+  plot = p,
+  width = 8,
+  height = 12,   # 12 pollici garantiscono lo spazio verticale per 64 righe
+  dpi = 300
+)
 ```
 
 #subset pathways myo

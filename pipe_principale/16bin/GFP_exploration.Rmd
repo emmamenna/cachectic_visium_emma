@@ -9,46 +9,47 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r, include=FALSE}
-library(arrow)
-library(Banksy)
-library(BiocParallel)
-library(DropletUtils)
 library(dplyr)
 library(edgeR)
 library(ggplot2)
-library(graphics)
-library(igraph)
-library(jsonlite)
-library(Matrix)
-library(matrixStats)
-library(OSTA.data)
-library(patchwork)
-library(pheatmap)
-library(S4Vectors)
-library(scDblFinder)
 library(scater)
 library(scran)
-library(scuttle)
-library(SingleCellExperiment)
 library(SpatialExperiment)
-library(SummarizedExperiment)
-library(tidyr)
-library(VisiumIO)
-library(spacexr)
 library(SpotSweeper)
 library(ggspavis)
-library(openxlsx)
-library(spatialreg)
-library(spdep)
-library(spaMM)
-library(scales) 
 library(purrr)
+library(writexl)
 ```
 
+```{r}
+bin16_list_ann <- readRDS("~/data/bin16_list_ann_gfp.rds")
+
+#Adding gfp value to block2
+# gfp_list <- readRDS("~/data/gfp_list.rds")
+# 
+# matched_indices <- match(colnames(bin16_list_ann$c26murf1_b2), gfp_list$murf_16$cell_id)
+# bin16_list_ann$c26murf1_b2$gfp_value <- gfp_list$murf_16$GFP_mean[matched_indices]
+# 
+# matched_indices_smad <- match(colnames(bin16_list_ann$c26SMAD23_b2), gfp_list$smad_16$cell_id)
+# bin16_list_ann$c26SMAD23_b2$gfp_value <- gfp_list$smad_16$GFP_mean[matched_indices_smad]
+
+# bin16_list_ann$c26murf1_b2$in_treatment <- ifelse(murf_list$c26murf1_b2$in_treatment == TRUE, 1, 0)
+# bin16_list_ann$c26SMAD23_b2$in_treatment <- ifelse(smad_list$c26SMAD23_b2$in_treatment == TRUE, 1, 0)
+# 
+# saveRDS(bin16_list_ann, file = "~/data/bin16_list_ann_gfp.rds")
+```
+
+```{r}
+fox0_samples <- c("c26foxO_b1", "c26foxO_b4", "c26foxO_b6", "c26foxO_b9")
+foxo_list <- bin16_list_ann[fox0_samples]
+murf_samples <- c("c26murf1_b2", "c26murf1_b3", "c26murf1_b5", "c26murf1_b9") 
+murf_list <- bin16_list_ann[murf_samples]
+smad_samples <- c("c26SMAD23_b2", "c26SMAD23_b4", "c26SMAD23_b5", "c26SMAD23_b9")
+smad_list <- bin16_list_ann[smad_samples]
+```
 
 #Plotting gfp
 ```{r}
-
 save_treatment_plots <- function(spe_list, prefix, outdir = "plots") {
 
   dir.create(outdir, showWarnings = FALSE, recursive = TRUE)
@@ -94,26 +95,44 @@ save_treatment_plots <- function(spe_list, prefix, outdir = "plots") {
 }
 
 # run
-fox0_list <- save_treatment_plots(fox0_list, "fox0")
+foxo_list <- save_treatment_plots(foxo_list, "fox0")
 murf_list <- save_treatment_plots(murf_list, "murf")
 smad_list <- save_treatment_plots(smad_list, "smad")
 ```
 
 #Plotting gfp value
 ```{r}
-bin16_list_ann_gfp <- readRDS("~/bin16_list_ann_gfp.rds")
-spe <- bin16_list_ann_gfp$c26foxO_b1
-
-lapply()
-plotCoords(spe, annotate = "gfp_value", )
-
-# Itera sugli oggetti SpatialExperiment presenti nella lista
-lista_grafici <- lapply(smad_list, function(spe_elem) {
-  plotCoords(spe_elem, annotate = "gfp_value") +
-    scale_color_gradient(low = "#e5f5e0", high = "#006d2c") # Gradiente dal verde chiaro al verde scuro
-})
-
-#GFP VALUE SU BLOCCO2 MISSING
-
-
+plot_gfp_value <- function(lista_dati, prefisso = "plot_", cartella_out = ".",
+                           estensione = ".png", width = 8, height = 6, dpi = 300) {
+  if (!dir.exists(cartella_out)) {
+    dir.create(cartella_out, recursive = TRUE)
+  }
+  
+  nomi_elementi <- names(lista_dati)
+  if (is.null(nomi_elementi)) {
+    nomi_elementi <- as.character(seq_along(lista_dati))
+  }
+  
+  lista_grafici <- lapply(seq_along(lista_dati), function(i) {
+    p <- plotCoords(lista_dati[[i]], annotate = "gfp_value") +
+      scale_color_gradient(low = "white", high = "#006d2c")
+    
+    nome_file <- file.path(cartella_out, paste0(prefisso, nomi_elementi[i], estensione))
+    ggsave(filename = nome_file, plot = p, width = width, height = height, dpi = dpi)
+    return(p)
+  })
+  
+  names(lista_grafici) <- nomi_elementi
+  return(lista_grafici)
+}
 ```
+
+```{r}
+grafici_foxo <- plot_gfp_value(foxo_list, prefisso = "foxo_")
+grafici_murf <- plot_gfp_value(murf_list, prefisso = "murf_")
+grafici_smad <- plot_gfp_value(smad_list, prefisso = "smad_")
+```
+
+
+
+

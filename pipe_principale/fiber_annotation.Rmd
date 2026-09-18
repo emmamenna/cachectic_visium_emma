@@ -39,6 +39,11 @@ library(ggspavis)
 library(writexl)
 library(lme4)
 library(purrr)
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(mclust) 
+library(fossil) 
 ```
 
 ```{r}
@@ -102,5 +107,82 @@ run_rctd_doublet <- function(spe, sce_ref, out_prefix) {
 ```{r}
 blocco1_c26foxO_fibre <- run_rctd_doublet(blocco1_c26foxO_fibre, sce_ref, "c26_fox0")
 ```
+
+#recupero annotazione da NowWhat/Tessera
+```{r}
+cell_type_fibre <- readRDS("~/data/cell_type_fibre.rds")
+```
+
+
+```{r}
+
+results <- cell_type_fibre %>%
+  # 1. FORCE dplyr's select function here
+  dplyr::select(blocco, campione, cell_id, metodo, cell_type) %>%
+  
+  # 2. Group by sample identifiers
+  group_by(blocco, campione) %>%
+  nest() %>%
+  
+  # 3. Apply a function to calculate the indices for each sample
+  mutate(
+    comparisons = purrr::map(data, function(sample_data) {
+      
+      # Pivot wider so each method has its own column of cell_types
+      wide_data <- sample_data %>%
+        pivot_wider(names_from = metodo, values_from = cell_type)
+      
+      # Identify the method columns (everything except cell_id)
+      method_cols <- setdiff(names(wide_data), "cell_id")
+      
+      # If there's only 1 method in this sample, we can't compare
+      if (length(method_cols) < 2) return(NULL)
+      
+      # Generate all pairwise combinations of methods
+      method_pairs <- combn(method_cols, 2, simplify = FALSE)
+      
+      # Calculate indices for each pair
+      purrr::map_dfr(method_pairs, function(pair) {
+        m1 <- pair[1]
+        m2 <- pair[2]
+        
+        # Filter out cells that weren't classified by both methods
+        valid_rows <- complete.cases(wide_data[[m1]], wide_data[[m2]])
+        
+        # Convert character labels to numeric factors for the functions
+        labels1 <- as.numeric(as.factor(wide_data[[m1]][valid_rows]))
+        labels2 <- as.numeric(as.factor(wide_data[[m2]][valid_rows]))
+        
+        # Calculate indices
+        standard_ri <- fossil::rand.index(labels1, labels2)
+        adjusted_ri <- mclust::adjustedRandIndex(labels1, labels2)
+        
+        # Return a row of results
+        tibble(
+          Method_A = m1,
+          Method_B = m2,
+          Cells_Compared = sum(valid_rows),
+          Rand_Index = standard_ri,
+          Adjusted_Rand_Index = adjusted_ri
+        )
+      })
+    })
+  ) %>%
+  
+  # 4. FORCE dplyr's select function here as well
+  dplyr::select(-data) %>%
+  unnest(cols = c(comparisons))
+
+print(results)
+writexl::write_xlsx(results, "rand_index_results.xlsx")
+```
+
+
+
+
+
+
+
+
 
 

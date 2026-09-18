@@ -184,10 +184,11 @@ for (spe_name in names(nuclei_list)) {
 
 #Barplot to show cell type proportions for each sample
 ```{r}
+#nuclei_list <- readRDS("~/data/nuclei_list_ann.rds")
 
 prop_df <- lapply(names(nuclei_list), function(name) {
   spe <- nuclei_list[[name]]
-  spe <- spe[,spe$spot_class != "reject" & spe$to_discard == "FALSE"] #FACCIO QUA
+  spe <- spe[,spe$to_discard == "FALSE"] #spe$spot_class != "reject" & 
   tab <- table(spe$cell_type)
   prop <- prop.table(tab)
   data.frame(
@@ -216,7 +217,7 @@ ggsave("cell_type_proportions_nuclei.png", width = 10, height = 6, dpi = 300)
 #Barplot to show cell types proportions for each condition
 ```{r}
 prop_df_condition <- lapply(nuclei_list, function(spe) {
-  spe <- spe[, spe$spot_class != "reject" & !spe$to_discard]
+  spe <- spe[,!spe$to_discard] #spe$spot_class != "reject" &
   data.frame(
     tissue_type = unique(spe$sampletype),
     cell_type = spe$cell_type

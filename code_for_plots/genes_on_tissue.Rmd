@@ -21,7 +21,7 @@ bin16_list_ann <- readRDS("~/data/bin16_list_ann.rds")
 
 #Main function
 ```{r}
-plot_on_tissue <- function(spe_list, samples, genes_list, output_dir = ".") {
+plot_on_tissue <- function(spe_list, samples, genes_list, tissue, output_dir = ".") {
   
   for (gene in genes_list) {
     
@@ -78,7 +78,7 @@ plot_on_tissue <- function(spe_list, samples, genes_list, output_dir = ".") {
                         theme = theme(plot.title = element_text(size = 14, face = "bold")))
       
       # Save comparison image
-      file_path <- file.path(output_dir, paste0("compare_", gene, ".png"))
+      file_path <- file.path(output_dir, paste0(gene, "_in_", tissue, "_samples", ".png"))
       ggsave(
         filename = file_path, 
         plot = combined_plot, 
@@ -91,17 +91,95 @@ plot_on_tissue <- function(spe_list, samples, genes_list, output_dir = ".") {
 }
 ```
 
+#function for raw counts
+```{r}
+plot_on_tissue_raw <- function(spe_list, samples, genes_list, tissue, output_dir = ".") {
+  
+  for (gene in genes_list) {
+    
+    plot_list <- list()
+
+    for (spe_name in samples) {
+      spe <- spe_list[[spe_name]]
+      
+      if (!gene %in% rownames(spe)) {
+        message(paste("Skipping:", gene, "not in", spe_name))
+        next
+      }
+      
+      coords <- as.data.frame(spatialCoords(spe))
+      colnames(coords)[1:2] <- c("x_coord", "y_coord")
+      
+      coords$expr <- as.numeric(counts(spe)[gene, ])
+      
+      p <- ggplot(coords, aes(x = x_coord, y = y_coord, color = expr)) +
+        geom_point(size = 0.5) +
+        coord_fixed() +
+        scale_y_reverse() +
+        ggtitle(spe_name) +
+        theme_void() +
+        theme(
+          plot.title = element_text(size = 10, face = "bold", hjust = 0.5),
+          # Mantengo il titolo della legenda per far capire che sono raw counts
+          legend.title = element_text(size = 8) 
+        ) +
+        # Scala colori indipendente per ogni plot
+        scale_color_gradientn(
+          colors = rev(hcl.colors(9, "Rocket")),
+          name = "Raw Counts"
+        )
+      
+      plot_list[[spe_name]] <- p
+    }
+    
+    if (length(plot_list) > 0) {
+      
+      combined_plot <- wrap_plots(plot_list, ncol = length(plot_list)) +
+        plot_annotation(title = paste("Gene:", gene, "(Raw Counts)"), 
+                        theme = theme(plot.title = element_text(size = 14, face = "bold")))
+
+      file_path <- file.path(output_dir, paste0(gene, "_in_", tissue, "_samples_raw.png"))
+      
+      ggsave(
+        filename = file_path, 
+        plot = combined_plot, 
+        width = 4.5 * length(plot_list), 
+        height = 4.5, 
+        dpi = 300
+      )
+    }
+  }
+}
+```
+
 
 ```{r}
 c26_samples <- c("c26_b2","c26_b4","c26_b6")
 sham_samples <- c("sham_b1","sham_b3","sham_b6")
-c26_sham <- c(c26_samples,sham_samples)
-genes_axone_guidance <- c("Sema6a", "Sema6b", "Sema3f", "Sema3a", "Sema4g", "Sema3e", "Sema4f", "Sema3c",
-                          "Sema4a", "Sema7a", "Sema4b", "Sema5a", "Sema4c", "Sema5b", "Sema6d", "Sema4d",
-                          "Sema6c", "Nrp1", "Nrp2", "Plxnb2", "Plxna2", "Plxnb3", "Plxnb1")
-plot_on_tissue(bin16_list_ann, c26_sham, genes_axone_guidance)
+fox0_samples <- c("c26foxO_b1", "c26foxO_b4", "c26foxO_b6", "c26foxO_b9")
+murf_samples <- c("c26murf1_b2", "c26murf1_b3", "c26murf1_b5", "c26murf1_b9")
+smad_samples <- c("c26SMAD23_b2", "c26SMAD23_b4", "c26SMAD23_b5", "c26SMAD23_b9")
+stat_samples <- c("c26STAT3_b1", "c26STAT3_b3", "c26STAT3_b5")
 
+#c26_sham <- c(c26_samples,sham_samples)
+# genes_axone_guidance <- c("Sema6a", "Sema6b", "Sema3f", "Sema3a", "Sema4g", "Sema3e", "Sema4f", "Sema3c",
+#                           "Sema4a", "Sema7a", "Sema4b", "Sema5a", "Sema4c", "Sema5b", "Sema6d", "Sema4d",
+#                           "Sema6c", "Nrp1", "Nrp2", "Plxnb2", "Plxna2", "Plxnb3", "Plxnb1")
+
+plot_on_tissue(bin16_list_ann, fox0_samples, c("Foxo1","Foxo3","Trim63"), "fox0")
+plot_on_tissue(bin16_list_ann, murf_samples, c("Foxo1","Foxo3","Trim63"), "murf")
+plot_on_tissue(bin16_list_ann, smad_samples, c("Smad2","Smad3"), "smad")
+plot_on_tissue(bin16_list_ann, stat_samples, c("Stat3"), "stat")
 ```
 
+```{r}
+plot_on_tissue_raw(bin16_list_ann, fox0_samples, c("Foxo1","Foxo3","Trim63"), "fox0")
+plot_on_tissue_raw(bin16_list_ann, murf_samples, c("Foxo1","Foxo3","Trim63"), "murf")
+plot_on_tissue_raw(bin16_list_ann, smad_samples, c("Smad2","Smad3"), "smad")
+plot_on_tissue_raw(bin16_list_ann, stat_samples, c("Stat3"), "stat")
+
+plot_on_tissue_raw(bin16_list_ann, sham_samples, c("Foxo1","Foxo3","Trim63", "Stat3", "Smad2","Smad3"), "sham")
+plot_on_tissue_raw(bin16_list_ann, c26_samples, c("Foxo1","Foxo3","Trim63", "Stat3", "Smad2","Smad3"), "c26")
+```
 
 

@@ -1,0 +1,164 @@
+---
+title: "DEG_GSEA_MYO_NUCLEI"
+output: html_document
+date: "2026-08-27"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(edgeR)
+library(clusterProfiler)
+library(org.Mm.eg.db)
+library(AnnotationDbi)
+library(openxlsx)
+library(SummarizedExperiment)
+library(scuttle)
+library(scater)
+```
+
+#Objects
+```{r}
+nuclei_list_ann <- readRDS("~/data/nuclei_list_ann.rds")
+subset_list <- nuclei_list_ann[!names(nuclei_list_ann) %in%
+                                   c("blocco1_c26foxO", "blocco2_c26murf1", "blocco2_c26SMAD23", "blocco3_c26murf1",
+                                     "blocco4_c26foxO", "blocco4_c26SMAD23", "blocco5_c26murf1",  "blocco5_c26SMAD23",
+                                     "blocco6_c26foxO", "blocco9_c26foxO", "blocco9_c26murf1", "blocco9_c26SMAD23")]
+
+contrast_list <- list(
+  "C26_vs_SHAM"   = c("sampletypec26 - sampletypesham"),
+  "STAT3_vs_C26"  = c("sampletypec26STAT3 - sampletypec26"),
+  "STAT3_vs_SHAM" = c("sampletypec26STAT3 - sampletypesham")
+)
+```
+
+#Functions
+```{r}
+make_geneList_kegg <- function(logFC_named_by_SYMBOL) {
+  # SYMBOL -> ENTREZ mapping
+  ids <- suppressMessages(
+    bitr(names(logFC_named_by_SYMBOL),
+         fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Mm.eg.db)
+  )
+  
+  v <- logFC_named_by_SYMBOL[ids$SYMBOL]
+  names(v) <- ids$ENTREZID
+  v <- v[!is.na(v) & !is.na(names(v))]
+  
+  # Deduplicate: Keep the entry with the highest absolute logFC for duplicate Entrez IDs
+  df <- data.frame(entrez = names(v), logFC = v, absFC = abs(v), stringsAsFactors = FALSE)
+  df <- df[order(df$absFC, decreasing = TRUE), ]
+  df <- df[!duplicated(df$entrez), ]
+  
+  gene_list <- df$logFC
+  names(gene_list) <- df$entrez
+  
+  # Return sorted vector
+  sort(gene_list, decreasing = TRUE)
+}
+
+convert_core_enrichment <- function(entrez_string) {
+  if (is.na(entrez_string) || entrez_string == "") return(NA)
+  
+  entrez_ids <- strsplit(entrez_string, "/")[[1]]
+  
+  # mapIds preserves vector order and size
+  symbols <- suppressMessages(
+    mapIds(org.Mm.eg.db, 
+           keys = entrez_ids, 
+           column = "SYMBOL", 
+           keytype = "ENTREZID", 
+           multiVals = "first")
+  )
+  
+  # Fallback: keep original Entrez ID if Symbol is missing
+  symbols <- ifelse(is.na(symbols), entrez_ids, symbols)
+  paste(symbols, collapse = "/")
+}
+```
+
+#Samples preparation
+```{r}
+for (nm in names(subset_list)) {
+  spe <- subset_list[[nm]]
+  colData(spe)$sample_id <- rep(nm, ncol(spe))
+  subset_list[[nm]] <- spe
+}
+
+combined_spe <- do.call(cbind, subset_list)
+combined_myo <- combined_spe[,combined_spe$cell_type %in% c("Myonuclei_IIb", "Myonuclei_IIx",
+                                      "Myonuclei_IIx_IIa","Myonuclei_IIx_IIb", "Myonuclei_MTJ",
+                                      "Myonuclei_NMJ", "Myonuclei_Trim63")]
+
+pb <- aggregateAcrossCells(combined_myo, use.assay.type = "counts",  ids=combined_myo$sample_id)
+pb$sampletype <- droplevels(as.factor(pb$sampletype))
+```
+
+#degs and gsea
+```{r message = FALSE, warning = FALSE}
+y <- DGEList(counts(pb), samples = colData(pb))
+keep <- filterByExpr(y, group = y$samples$tissue_type)
+y <- y[keep, , keep.lib.sizes = FALSE]
+y <- calcNormFactors(y)
+design <- model.matrix(~ 0 + sampletype, data = y$samples)
+y <- estimateDisp(y, design)
+fit <- glmFit(y, design)
+se <- SummarizedExperiment(assays = list(counts = y$counts),
+                           colData = y$samples)
+assay(se, "norm") <- edgeR::cpm(y, log = TRUE, prior.count = 1)
+
+gsea_list <- list()
+dge_list <- list()
+
+for (contrast_name in names(contrast_list)) {
+
+  contrast <- makeContrasts(
+    contrasts = contrast_list[[contrast_name]],
+    levels = design
+  )
+
+  lrt <- glmLRT(fit, contrast = contrast)
+  top <- topTags(lrt, n = Inf)$table
+  top$SYMBOL <- rownames(top)
+  top$significant <- top$FDR < 0.05
+
+  dge_list[[contrast_name]] <- top
+  
+  rowData(se)[[paste0("PVAL_", contrast_name)]]     <- top$PValue[match(rownames(se), rownames(top))]
+  rowData(se)[[paste0("FC_", contrast_name)]]       <- top$logFC[match(rownames(se), rownames(top))]
+  rowData(se)[[paste0("ADJ.PVAL_", contrast_name)]] <- top$FDR[match(rownames(se), rownames(top))]
+  rowData(se)[[paste0("SYMBOL_", contrast_name)]]   <- top$SYMBOL[match(rownames(se), rownames(top))]
+
+  geneList <- top$logFC
+  names(geneList) <- top$SYMBOL
+  geneList <- geneList[!is.na(geneList) & !is.na(names(geneList))]
+  geneList <- make_geneList_kegg(geneList)
+
+  gsea_sig <- gseKEGG(
+    geneList = geneList,
+    organism = "mmu",
+    pvalueCutoff = 0.05,
+    verbose = FALSE
+  )
+
+  gsea_list[[contrast_name]] <- gsea_sig
+
+  if (!is.null(gsea_sig) && nrow(gsea_sig@result) > 0) {
+    gsea_sig@result$core_enrichment_symbols <-
+      sapply(gsea_sig@result$core_enrichment, convert_core_enrichment)
+    res_df <- as.data.frame(gsea_sig@result)
+  
+    write.xlsx(
+      res_df,
+      file = paste0("GSEA_", contrast_name, ".xlsx"),
+      rowNames = FALSE
+    )
+  }
+}
+```
+
+
+
+

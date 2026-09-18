@@ -115,6 +115,58 @@ saveWorkbook(wb, file = "gsea_nuclei_trim_2b.xlsx", overwrite = TRUE)
 
 ```
 
+```{r}
+p <- enrichplot::dotplot(gsea_sig, showCategory = 15, font.size = 8,
+                    title = "Enriched Pathways", split=".sign") + facet_grid(.~.sign)
+ggsave("pathways_trim_2b.pdf", plot = p,
+       width = 8, height = 9, dpi = 300)
+
+#second plot 
+enrich_KEGG <- as.data.frame(gsea_sig@result)
+enrich_KEGG <- enrich_KEGG[order(enrich_KEGG$p.adjust), ]
+enrich_KEGG <- enrich_KEGG[enrich_KEGG$p.adjust < 0.05, ]
+
+enrich_KEGG$Count <- sapply(strsplit(enrich_KEGG$core_enrichment, "/"), length)
+enrich_KEGG$GeneRatio <- enrich_KEGG$Count / enrich_KEGG$setSize
+
+# separa i dati
+enrich_pos <- enrich_KEGG[enrich_KEGG$NES > 0, ]
+enrich_neg <- enrich_KEGG[enrich_KEGG$NES < 0, ]
+
+# grafico positivi
+p_pos <- ggplot(enrich_pos,
+                aes(x = -log10(p.adjust),
+                    y = reorder(Description, -log10(p.adjust)),
+                    color = GeneRatio,
+                    size = Count)) +
+  geom_point() +
+  scale_color_gradient(low = "blue", high = "red") +
+  theme_minimal(base_size = 16) +
+  ylab("Description") +
+  xlab("-log10(p.adjust)") +
+  ggtitle("KEGG Positive Pathways")
+
+ggsave("trim_2b_pos.pdf", plot = p_pos,
+       width = 20, height = 9, dpi = 300)
+
+# grafico negativi
+p_neg <- ggplot(enrich_neg,
+                aes(x = -log10(p.adjust),
+                    y = reorder(Description, -log10(p.adjust)),
+                    color = GeneRatio,
+                    size = Count)) +
+  geom_point() +
+  scale_color_gradient(low = "blue", high = "red") +
+  theme_minimal(base_size = 16) +
+  ylab("Description") +
+  xlab("-log10(p.adjust)") +
+  ggtitle("KEGG Negative Pathways")
+
+ggsave("trim_2b_neg.pdf", plot = p_neg,
+       width = 20, height = 9, dpi = 300)
+
+```
+
 #DEG trim vs overall
 ```{r}
 pb_nuclei$group <- paste0(pb_nuclei$cell_type, "_", pb_nuclei$sampletype)
@@ -201,3 +253,75 @@ writeData(wb, sheet = "GSEA_Results", x = res_df, rowNames = TRUE)
 saveWorkbook(wb, file = "gsea_nuclei_trim_overall.xlsx", overwrite = TRUE)
 
 ```
+
+```{r}
+pathways <- c("mmu00190","mmu04714","mmu01100","mmu04020","mmu04261","mmu00010","mmu04022","mmu04820",
+              "mmu04137","mmu04150")
+gsea_sig@result <- gsea_sig@result[gsea_sig@result$ID %in% pathways,]
+p <- enrichplot::dotplot(gsea_sig, showCategory = 15, font.size = 10,
+                    title = "Enriched Pathways", split=".sign") + facet_grid(.~.sign)
+ggsave("pathways_trim_overall.pdf", plot = p,
+       width = 8, height = 9, dpi = 300)
+
+#second plot 
+enrich_KEGG <- as.data.frame(gsea_sig@result)
+enrich_KEGG <- enrich_KEGG[order(enrich_KEGG$p.adjust), ]
+enrich_KEGG <- enrich_KEGG[enrich_KEGG$p.adjust < 0.05, ]
+
+enrich_KEGG$Count <- sapply(strsplit(enrich_KEGG$core_enrichment, "/"), length)
+enrich_KEGG$GeneRatio <- enrich_KEGG$Count / enrich_KEGG$setSize
+
+# separa i dati
+enrich_pos <- enrich_KEGG[enrich_KEGG$NES > 0, ]
+enrich_neg <- enrich_KEGG[enrich_KEGG$NES < 0, ]
+
+# grafico positivi
+p_pos <- ggplot(enrich_pos,
+                aes(x = -log10(p.adjust),
+                    y = reorder(Description, -log10(p.adjust)),
+                    color = GeneRatio,
+                    size = Count)) +
+  geom_point() +
+  scale_size_continuous(range = c(4, 10)) + 
+  scale_color_gradient(low = "blue", high = "red") +
+  theme_minimal(base_size = 16) +
+  theme(
+    axis.text.y = element_text(size = 20), # Dimensione testo asse Y (le description)
+    axis.text.x = element_text(size = 14), # Dimensione testo asse X
+    axis.title = element_text(size = 16, face = "bold"), # Titoli degli assi
+    plot.title = element_text(size = 18, face = "bold")  # Titolo del grafico
+  ) +
+  ylab("Description") +
+  xlab("-log10(p.adjust)") +
+  ggtitle("KEGG Positive Pathways")
+
+ggsave("trim_overall_pos.pdf", plot = p_pos,
+       width = 10, height = 9, dpi = 300)
+
+# grafico negativi
+p_neg <- ggplot(enrich_neg,
+                aes(x = -log10(p.adjust),
+                    y = reorder(Description, -log10(p.adjust)),
+                    color = GeneRatio,
+                    size = Count)) +
+  geom_point() +
+  scale_size_continuous(range = c(4, 10)) + 
+  scale_color_gradient(low = "blue", high = "red") +
+  theme_minimal(base_size = 16) +
+  theme(
+    axis.text.y = element_text(size = 17), # Dimensione testo asse Y (le description)
+    axis.text.x = element_text(size = 14), # Dimensione testo asse X
+    axis.title = element_text(size = 16, face = "bold"), # Titoli degli assi
+    plot.title = element_text(size = 18, face = "bold")  # Titolo del grafico
+  )
+  ylab("Description") +
+  xlab("-log10(p.adjust)") +
+  ggtitle("KEGG Negative Pathways")
+
+ggsave("trim_overall_neg.pdf", plot = p_neg,
+       width = 20, height = 9, dpi = 300)
+
+```
+
+
+

@@ -126,7 +126,7 @@ run_my_rctd <- function(spe, sce_ref, out_prefix) {
     cell_type_col = "subclusters"
   )
   
-# For multi mode:
+# For multi mode: 
 # cell_type_list: List of cell types per pixel
 # conf_list: List of whether cell type predictions are confident
 # Additional metrics like min_score (likelihood)

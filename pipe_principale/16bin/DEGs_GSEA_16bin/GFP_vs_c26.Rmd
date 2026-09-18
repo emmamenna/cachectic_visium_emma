@@ -225,16 +225,186 @@ for (contrast_name in names(contrast_list)) {
     )
     
     res_df <- as.data.frame(gsea_sig@result)
-    write.xlsx(
-      res_df,
-      file = paste0("GSEA_", contrast_name, ".xlsx"),
-      rowNames = FALSE
-    )
+    # write.xlsx(
+    #   res_df,
+    #   file = paste0("GSEA_", contrast_name, ".xlsx"),
+    #   rowNames = FALSE
+    # )
   }
 }
 
 ```
 
+```{r}
+fox0_pathways <- 
+  c("mmu04060","mmu04621","mmu04623","mmu04518","mmu04064","mmu04668","mmu04630","mmu04217","mmu04080","mmu04933",
+  "mmu04210","mmu04015","mmu04810","mmu05200","mmu04610","mmu04072","mmu04512","mmu04142","mmu04622","mmu05202",
+  "mmu00640","mmu04146","mmu00020","mmu01210","mmu00630","mmu00620","mmu01200","mmu03008","mmu04136","mmu00785",
+  "mmu00071","mmu00970")
 
+murf_pathways <- c("mmu04514","mmu04060","mmu04621","mmu04062","mmu04623","mmu04080","mmu04064","mmu04668",
+                   "mmu04630","mmu04610","mmu04657","mmu05200","mmu04210","mmu04820","mmu04933","mmu04814",
+                   "mmu04512","mmu04622","mmu04072","mmu05206","mmu04151","mmu05202","mmu00280","mmu01210",
+                   "mmu04625","mmu04137","mmu04146","mmu03008","mmu04710","mmu00020","mmu04136","mmu00620",
+                   "mmu00071","mmu03320","mmu00592")
+
+smad_pathways <- c("mmu04514","mmu04621","mmu04623","mmu04630","mmu04064","mmu04217","mmu04080","mmu04668",
+                   "mmu04518","mmu04210","mmu04810","mmu04622","mmu04657","mmu00600","mmu04512","mmu00280",
+                   "mmu04146","mmu04136","mmu01210","mmu03008","mmu00620","mmu00630","mmu00020","mmu00071")
+
+```
+
+#DOTPLOT FOX0
+```{r}
+fox0_sig <- gsea_list$FOXO_vs_C26
+fox0_sig@result <- fox0_sig@result[fox0_sig@result$ID %in% fox0_pathways,]
+p <- enrichplot::dotplot(fox0_sig, showCategory = 32, font.size = 6,
+                    title = "Enriched Pathways", split=".sign") + facet_grid(.~.sign)
+ggsave("pathways_fox0.pdf", plot = p,
+       width = 8, height = 9, dpi = 300)
+
+#second plot 
+enrich_KEGG <- as.data.frame(fox0_sig@result)
+enrich_KEGG <- enrich_KEGG[order(enrich_KEGG$p.adjust), ]
+enrich_KEGG <- enrich_KEGG[enrich_KEGG$p.adjust < 0.05, ]
+enrich_KEGG$Count <- sapply(strsplit(enrich_KEGG$core_enrichment, "/"), length)
+enrich_KEGG$GeneRatio <- enrich_KEGG$Count / enrich_KEGG$setSize
+enrich_pos <- enrich_KEGG[enrich_KEGG$NES > 0, ]
+enrich_neg <- enrich_KEGG[enrich_KEGG$NES < 0, ]
+
+# grafico positivi
+p_pos <- ggplot(enrich_pos,
+                aes(x = -log10(p.adjust),
+                    y = reorder(Description, -log10(p.adjust)),
+                    color = GeneRatio,
+                    size = Count)) +
+  geom_point() +
+  scale_color_gradient(low = "blue", high = "red") +
+  theme_minimal(base_size = 16) +
+  ylab("Description") +
+  xlab("-log10(p.adjust)") +
+  ggtitle("KEGG Positive Pathways")
+
+ggsave("fox0_pos.pdf", plot = p_pos,
+       width = 20, height = 9, dpi = 300)
+
+# grafico negativi
+p_neg <- ggplot(enrich_neg,
+                aes(x = -log10(p.adjust),
+                    y = reorder(Description, -log10(p.adjust)),
+                    color = GeneRatio,
+                    size = Count)) +
+  geom_point() +
+  scale_color_gradient(low = "blue", high = "red") +
+  theme_minimal(base_size = 16) +
+  ylab("Description") +
+  xlab("-log10(p.adjust)") +
+  ggtitle("KEGG Negative Pathways")
+
+ggsave("fox0_neg.pdf", plot = p_neg,
+       width = 20, height = 9, dpi = 300)
+```
+
+#DOTPLOT MURF
+```{r}
+murf_sig <- gsea_list$MURF1_vs_C26
+murf_sig@result <- murf_sig@result[murf_sig@result$ID %in% murf_pathways,]
+p <- enrichplot::dotplot(murf_sig, showCategory = 35, font.size = 6,
+                    title = "Enriched Pathways", split=".sign") + facet_grid(.~.sign)
+ggsave("pathways_murf.pdf", plot = p,
+       width = 8, height = 9, dpi = 300)
+
+#second plot 
+enrich_KEGG <- as.data.frame(murf_sig@result)
+enrich_KEGG <- enrich_KEGG[order(enrich_KEGG$p.adjust), ]
+enrich_KEGG <- enrich_KEGG[enrich_KEGG$p.adjust < 0.05, ]
+enrich_KEGG$Count <- sapply(strsplit(enrich_KEGG$core_enrichment, "/"), length)
+enrich_KEGG$GeneRatio <- enrich_KEGG$Count / enrich_KEGG$setSize
+enrich_pos <- enrich_KEGG[enrich_KEGG$NES > 0, ]
+enrich_neg <- enrich_KEGG[enrich_KEGG$NES < 0, ]
+
+# grafico positivi
+p_pos <- ggplot(enrich_pos,
+                aes(x = -log10(p.adjust),
+                    y = reorder(Description, -log10(p.adjust)),
+                    color = GeneRatio,
+                    size = Count)) +
+  geom_point() +
+  scale_color_gradient(low = "blue", high = "red") +
+  theme_minimal(base_size = 16) +
+  ylab("Description") +
+  xlab("-log10(p.adjust)") +
+  ggtitle("KEGG Positive Pathways")
+
+ggsave("murf_pos.pdf", plot = p_pos,
+       width = 20, height = 9, dpi = 300)
+
+# grafico negativi
+p_neg <- ggplot(enrich_neg,
+                aes(x = -log10(p.adjust),
+                    y = reorder(Description, -log10(p.adjust)),
+                    color = GeneRatio,
+                    size = Count)) +
+  geom_point() +
+  scale_color_gradient(low = "blue", high = "red") +
+  theme_minimal(base_size = 16) +
+  ylab("Description") +
+  xlab("-log10(p.adjust)") +
+  ggtitle("KEGG Negative Pathways")
+
+ggsave("murf_neg.pdf", plot = p_neg,
+       width = 20, height = 9, dpi = 300)
+```
+
+#DOTPLOT SMAD
+```{r}
+smad_sig <- gsea_list$SMAD23_vs_C26
+smad_sig@result <- smad_sig@result[smad_sig@result$ID %in% smad_pathways,]
+p <- enrichplot::dotplot(smad_sig, showCategory = 24, font.size = 6,
+                    title = "Enriched Pathways", split=".sign") + facet_grid(.~.sign)
+ggsave("pathways_smad.pdf", plot = p,
+       width = 8, height = 9, dpi = 300)
+
+#second plot 
+enrich_KEGG <- as.data.frame(smad_sig@result)
+enrich_KEGG <- enrich_KEGG[order(enrich_KEGG$p.adjust), ]
+enrich_KEGG <- enrich_KEGG[enrich_KEGG$p.adjust < 0.05, ]
+enrich_KEGG$Count <- sapply(strsplit(enrich_KEGG$core_enrichment, "/"), length)
+enrich_KEGG$GeneRatio <- enrich_KEGG$Count / enrich_KEGG$setSize
+enrich_pos <- enrich_KEGG[enrich_KEGG$NES > 0, ]
+enrich_neg <- enrich_KEGG[enrich_KEGG$NES < 0, ]
+
+# grafico positivi
+p_pos <- ggplot(enrich_pos,
+                aes(x = -log10(p.adjust),
+                    y = reorder(Description, -log10(p.adjust)),
+                    color = GeneRatio,
+                    size = Count)) +
+  geom_point() +
+  scale_color_gradient(low = "blue", high = "red") +
+  theme_minimal(base_size = 16) +
+  ylab("Description") +
+  xlab("-log10(p.adjust)") +
+  ggtitle("KEGG Positive Pathways")
+
+ggsave("smad_pos.pdf", plot = p_pos,
+       width = 20, height = 9, dpi = 300)
+
+# grafico negativi
+p_neg <- ggplot(enrich_neg,
+                aes(x = -log10(p.adjust),
+                    y = reorder(Description, -log10(p.adjust)),
+                    color = GeneRatio,
+                    size = Count)) +
+  geom_point() +
+  scale_color_gradient(low = "blue", high = "red") +
+  theme_minimal(base_size = 16) +
+  ylab("Description") +
+  xlab("-log10(p.adjust)") +
+  ggtitle("KEGG Negative Pathways")
+
+ggsave("smad_neg.pdf", plot = p_neg,
+       width = 20, height = 9, dpi = 300)
+```
 
 

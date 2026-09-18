@@ -1,0 +1,197 @@
+---
+title: "exploring_target_genes"
+output: html_document
+date: "2026-07-30"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(SpatialExperiment)
+library(ggplot2)
+```
+
+```{r}
+bin16_list_ann <- readRDS("~/data/bin16_list_ann.rds")
+c26_samples <- c("c26_b2","c26_b4","c26_b6")
+sham_samples <- c("sham_b1","sham_b3","sham_b6")
+fox0_samples <- c("c26foxO_b1", "c26foxO_b4", "c26foxO_b6", "c26foxO_b9")
+murf_samples <- c("c26murf1_b2", "c26murf1_b3", "c26murf1_b5", "c26murf1_b9")
+smad_samples <- c("c26SMAD23_b2", "c26SMAD23_b4", "c26SMAD23_b5", "c26SMAD23_b9")
+stat_samples <- c("c26STAT3_b1", "c26STAT3_b3", "c26STAT3_b5")
+
+```
+
+#general summary (to compare with Oliveira gold standard):
+```{r}
+mat <- counts(bin16_list_ann$c26murf1_b9)
+gene_sums <- rowSums(mat)
+expressed_counts <- rowSums(mat > 0)
+mean_expressed <- gene_sums / expressed_counts
+#Expression of the genes in the spots where they are expressed:
+summary(mean_expressed)
+
+summary(gene_sums[gene_sums>0])
+boxplot(gene_sums)
+ 
+#Proportion of spots where genes are expressed:
+summary(rowSums(mat > 0) / 370074) * 100
+
+```
+
+
+```{r}
+counts_inspection <- function(spe_list, samples, genes_list, tissue, output_dir = ".") {
+  
+  # Crea la cartella di output se non esiste già
+  if (!dir.exists(output_dir)) {
+    dir.create(output_dir, recursive = TRUE)
+  }
+  
+  # Lista per raccogliere l'espressione media per cell type
+  mean_expr_list <- list()
+  
+  for (gene in genes_list) {
+    
+    # Dataframe temporaneo per raccogliere i dati di tutti i campioni per il gene corrente
+    gene_raw_data <- list()
+    
+    for (spe_name in samples) {
+      
+      # Verifica se il campione esiste nella lista
+      if (!spe_name %in% names(spe_list)) {
+        message(paste("Skipping:", spe_name, "non presente in spe_list"))
+        next
+      }
+      
+      spe <- spe_list[[spe_name]]
+      
+      # Verifica se il gene è presente nei dati
+      if (!gene %in% rownames(spe)) {
+        message(paste("Skipping:", gene, "non in", spe_name))
+        next
+      }
+      
+      # Verifica se la colonna "new_cell_type" è presente nei metadati
+      if (!"new_cell_type" %in% colnames(colData(spe))) {
+        message(paste("Skipping: colonna 'new_cell_type' non trovata in", spe_name))
+        next
+      }
+      
+      # Estrazione dei conteggi e dei tipi cellulari
+      expr <- as.numeric(counts(spe)[gene, ])
+      cell_types <- as.character(colData(spe)[["new_cell_type"]])
+      
+      # Memorizza i conteggi per il plot aggregato
+      gene_raw_data[[spe_name]] <- data.frame(
+        counts = expr,
+        Cell_Type = cell_types,
+        Sample = spe_name,
+        stringsAsFactors = FALSE
+      )
+      
+      # ------------------------------------------------------------------
+      # 1. CALCOLO ESPRESSIONE MEDIA PER CELL TYPE
+      # ------------------------------------------------------------------
+      avg_by_celltype <- tapply(expr, cell_types, mean, na.rm = TRUE)
+      
+      df_avg <- data.frame(
+        Tissue = tissue,
+        Sample = spe_name,
+        Gene = gene,
+        Cell_Type = names(avg_by_celltype),
+        Mean_Expression = as.numeric(avg_by_celltype),
+        stringsAsFactors = FALSE
+      )
+      
+      mean_expr_list[[length(mean_expr_list) + 1]] <- df_avg
+    }
+    
+    # Se non sono stati trovati dati per questo gene in nessun campione, passa al prossimo
+    if (length(gene_raw_data) == 0) next
+    
+    # Unione dei dati di tutti i campioni per il gene corrente
+    combined_gene_df <- do.call(rbind, gene_raw_data)
+    
+    # --------------------------------------------------------------------
+    # 2. GENERAZIONE E SALVATAGGIO DEI PLOT AGGREGATI (IN UN UNICO FILE)
+    # --------------------------------------------------------------------
+    
+    # A) Istogramma dei conteggi raw (Facettato per Campione)
+    hist_filename <- file.path(output_dir, paste0(tissue, "_", gene, "_hist_all_samples.png"))
+    
+    p_hist <- ggplot(combined_gene_df, aes(x = counts, fill = Sample)) +
+      geom_histogram(bins = 30, color = "black", alpha = 0.7, show.legend = FALSE) +
+      facet_wrap(~ Sample, scales = "free_y") +
+      theme_minimal(base_size = 12) +
+      labs(
+        title = paste("Distribuzione Conteggi Raw:", gene),
+        subtitle = paste("Tessuto:", tissue, "| Confronto tra campioni"),
+        x = "Conteggi Raw",
+        y = "Frequenza (Numero di spot/celle)"
+      )
+    
+    # Calcola la dimensione dinamica dell'immagine in base al numero di campioni
+    n_samples <- length(unique(combined_gene_df$Sample))
+    plot_width <- min(14, 4 * ceiling(sqrt(n_samples)))
+    plot_height <- min(12, 3.5 * ceiling(n_samples / ceiling(sqrt(n_samples))))
+    
+    ggsave(hist_filename, plot = p_hist, width = plot_width, height = plot_height, dpi = 300)
+    
+    # B) Grafico dell'Espressione Media per Cell Type (Facettato per Campione)
+    combined_mean_gene <- do.call(rbind, mean_expr_list)
+    combined_mean_gene <- combined_mean_gene[combined_mean_gene$Gene == gene, ]
+    
+    barplot_filename <- file.path(output_dir, paste0(tissue, "_", gene, "_mean_expr_by_celltype.png"))
+    
+    p_bar <- ggplot(combined_mean_gene, aes(x = Cell_Type, y = Mean_Expression, fill = Cell_Type)) +
+      geom_col(show.legend = FALSE) +
+      facet_wrap(~ Sample) +
+      theme_minimal(base_size = 12) +
+      theme(
+        axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)
+      ) +
+      labs(
+        title = paste("Espressione Media per Cell Type:", gene),
+        subtitle = paste("Tessuto:", tissue, "| Confronto tra campioni"),
+        x = "Tipo Cellulare (new_cell_type)",
+        y = "Espressione Media"
+      )
+    
+    ggsave(barplot_filename, plot = p_bar, width = plot_width + 2, height = plot_height + 1, dpi = 300)
+    
+    message(paste("Grafici aggregati salvati per il gene:", gene))
+  }
+  
+  # ----------------------------------------------------------------------
+  # 3. SALVATAGGIO TABELLA FINALE CSV
+  # ----------------------------------------------------------------------
+  if (length(mean_expr_list) > 0) {
+    full_mean_df <- do.call(rbind, mean_expr_list)
+    csv_filename <- file.path(output_dir, paste0(tissue, "_mean_expression_by_celltype.csv"))
+    
+    write.csv(full_mean_df, csv_filename, row.names = FALSE)
+    message(paste("\nTabella espressione media salvata con successo in:", csv_filename))
+    
+    return(full_mean_df)
+  } else {
+    message("Nessun dato elaborato.")
+    return(NULL)
+  }
+}
+```
+
+
+```{r}
+counts_inspection(bin16_list_ann, fox0_samples, c("Foxo1","Foxo3","Trim63"), "fox0")
+counts_inspection(bin16_list_ann, murf_samples, c("Foxo1","Foxo3","Trim63"), "murf")
+counts_inspection(bin16_list_ann, smad_samples, c("Smad2","Smad3"), "smad")
+counts_inspection(bin16_list_ann, smad_samples, c("Stat3"), "stat")
+
+counts_inspection(bin16_list_ann, sham_samples, c("Foxo1","Foxo3","Trim63", "Stat3", "Smad2","Smad3"), "sham")
+counts_inspection(bin16_list_ann, c26_samples, c("Foxo1","Foxo3","Trim63", "Stat3", "Smad2","Smad3"), "c26")
+```
+
+
